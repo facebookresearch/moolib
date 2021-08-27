@@ -1,0 +1,81 @@
+#pragma once
+
+#include "pybind11/pybind11.h"
+
+namespace moolib {
+
+namespace py = pybind11;
+
+template<typename T>
+struct GilWrapper {
+  std::optional<T> obj;
+  GilWrapper() = default;
+  GilWrapper(const T& n) {
+    py::gil_scoped_acquire gil;
+    obj = n;
+  }
+  GilWrapper(T&& n) {
+    obj = std::move(n);
+  }
+  GilWrapper(const GilWrapper& n) {
+    py::gil_scoped_acquire gil;
+    obj = n.obj;
+  }
+  GilWrapper(GilWrapper&& n) {
+    obj = std::move(n.obj);
+  }
+  ~GilWrapper() {
+    if (obj && *obj) {
+      py::gil_scoped_acquire gil;
+      obj.reset();
+    }
+  }
+  T release() {
+    T r = std::move(obj.value());
+    obj.reset();
+    return r;
+  }
+  void reset() {
+    obj.reset();
+  }
+  operator bool() const noexcept {
+    return obj.has_value();
+  }
+  T& operator*() & {
+    return *obj;
+  }
+  T&& operator*() && {
+    return std::move(*obj);
+  }
+  T* operator->() {
+    return &*obj;
+  }
+  GilWrapper& operator=(const GilWrapper& n) {
+    py::gil_scoped_acquire gil;
+    obj = n.obj;
+    return *this;
+  }
+  GilWrapper& operator=(GilWrapper&& n) {
+    if (obj && *obj) {
+      // acquire GIL here as existing object needs to be released
+      py::gil_scoped_acquire gil;
+      obj = std::move(n.obj);
+    } else {
+      obj = std::move(n.obj);
+    }
+    return *this;
+  }
+  template<typename X>
+  void serialize(X& x) {
+    py::gil_scoped_acquire gil;
+    obj.emplace();
+    x(*obj);
+  }
+  template<typename X>
+  void serialize(X& x) const {
+    py::gil_scoped_acquire gil;
+    x(*obj);
+  }
+};
+
+} // namespace moolib

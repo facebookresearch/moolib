@@ -1,0 +1,3 @@
+gym[atari]>=0.14.0  # Installs gym and atari. Needs to happen at once.
+atari-py==0.2.5  # Version with ROMs.
+opencv-python  # For resizing in atari_preprocessing.py
