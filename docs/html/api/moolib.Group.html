@@ -1,0 +1,196 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+
+    <title>moolib.Group &#8212; moolib  documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css" />
+    <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js"></script>
+    <script src="../_static/jquery.js"></script>
+    <script src="../_static/underscore.js"></script>
+    <script src="../_static/doctools.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="moolib.Rpc" href="moolib.Rpc.html" />
+    <link rel="prev" title="moolib.EnvStepper" href="moolib.EnvStepper.html" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="moolib-group">
+<h1>moolib.Group<a class="headerlink" href="#moolib-group" title="Permalink to this headline">¶</a></h1>
+<dl class="py class">
+<dt class="sig sig-object py" id="moolib.Group">
+<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">moolib.</span></span><span class="sig-name descname"><span class="pre">Group</span></span><a class="headerlink" href="#moolib.Group" title="Permalink to this definition">¶</a></dt>
+<dd><p>A group of Rpc objects.</p>
+<p>This class groups a number of Rpc objects under one unique namespace (the group <code class="docutils literal notranslate"><span class="pre">name</span></code>),
+to allow for coordinated AllReduce actions.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Group.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Group.__init__" title="Permalink to this definition">¶</a></dt>
+<dd><p>Init.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>rpc</strong> (<a class="reference internal" href="moolib.Rpc.html#moolib.Rpc" title="moolib.Rpc"><em>Rpc</em></a>) – an <a class="reference internal" href="moolib.Rpc.html#moolib.Rpc" title="moolib.Rpc"><code class="xref py py-class docutils literal notranslate"><span class="pre">Rpc</span></code></a> object.</p></li>
+<li><p><strong>name</strong> (<em>str</em>) – the name of the group.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<p class="rubric">Methods</p>
+<table class="longtable docutils align-default">
+<colgroup>
+<col style="width: 10%" />
+<col style="width: 90%" />
+</colgroup>
+<tbody>
+<tr class="row-odd"><td><p><a class="reference internal" href="#moolib.Group.__init__" title="moolib.Group.__init__"><code class="xref py py-obj docutils literal notranslate"><span class="pre">__init__</span></code></a></p></td>
+<td><p>Init.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">active</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">all_reduce</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">members</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">name</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">set_broker_name</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">set_sort_order</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">set_timeout</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="xref py py-obj docutils literal notranslate"><span class="pre">sync_id</span></code></p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#moolib.Group.update" title="moolib.Group.update"><code class="xref py py-obj docutils literal notranslate"><span class="pre">update</span></code></a></p></td>
+<td><p>Update the state of the <code class="docutils literal notranslate"><span class="pre">Group</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Group.update">
+<span class="sig-name descname"><span class="pre">update</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Group.update" title="Permalink to this definition">¶</a></dt>
+<dd><p>Update the state of the <code class="docutils literal notranslate"><span class="pre">Group</span></code>.</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../index.html">moolib</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../index.html">What is Moolib?</a></li>
+</ul>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="moolib.Accumulator.html">moolib.Accumulator</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.Batcher.html">moolib.Batcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.Broker.html">moolib.Broker</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.EnvPool.html">moolib.EnvPool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.EnvStepper.html">moolib.EnvStepper</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">moolib.Group</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.Rpc.html">moolib.Rpc</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="moolib.create_uid.html">moolib.create_uid</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.set_logging.html">moolib.set_logging</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.set_log_level.html">moolib.set_log_level</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.set_max_threads.html">moolib.set_max_threads</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="moolib.AllReduce.html">moolib.AllReduce</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.Future.html">moolib.Future</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.EnvStepperFuture.html">moolib.EnvStepperFuture</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="moolib.EnvStepper.html" title="previous chapter">moolib.EnvStepper</a></li>
+      <li>Next: <a href="moolib.Rpc.html" title="next chapter">moolib.Rpc</a></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>$('#searchbox').show(0);</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2021, Facebook AI Research.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 4.1.2</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      
+      |
+      <a href="../_sources/api/moolib.Group.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

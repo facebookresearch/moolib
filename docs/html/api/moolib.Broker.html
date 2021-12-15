@@ -1,0 +1,215 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+
+    <title>moolib.Broker &#8212; moolib  documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css" />
+    <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js"></script>
+    <script src="../_static/jquery.js"></script>
+    <script src="../_static/underscore.js"></script>
+    <script src="../_static/doctools.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="moolib.EnvPool" href="moolib.EnvPool.html" />
+    <link rel="prev" title="moolib.Batcher" href="moolib.Batcher.html" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="moolib-broker">
+<h1>moolib.Broker<a class="headerlink" href="#moolib-broker" title="Permalink to this headline">¶</a></h1>
+<dl class="py class">
+<dt class="sig sig-object py" id="moolib.Broker">
+<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">moolib.</span></span><span class="sig-name descname"><span class="pre">Broker</span></span><a class="headerlink" href="#moolib.Broker" title="Permalink to this definition">¶</a></dt>
+<dd><p>A class to coordinate a cohort during training.</p>
+<p>A broker is a class that should run permanently during your training, and it’s primary
+function is to do simple administration for the group. It maintains a list of the peers
+and their addresses, and sends updates when new peers join or disconnect. It uses an
+underlying <a class="reference internal" href="moolib.Rpc.html#moolib.Rpc" title="moolib.Rpc"><code class="xref py py-class docutils literal notranslate"><span class="pre">Rpc</span></code></a> class to do its communication and this can either be passed in
+or created on construction.</p>
+<p>The broker’s listening address is the address your <code class="docutils literal notranslate"><span class="pre">Accumulator</span></code> should connect to, and the
+broker should call <code class="docutils literal notranslate"><span class="pre">update</span></code> regularly. An example is provided in <code class="docutils literal notranslate"><span class="pre">examples/impala/broker.py</span></code>
+and below.</p>
+<p class="rubric">Example</p>
+<p>A simple broker:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># In this case create your own Rpc object</span>
+<span class="n">broker_rpc</span> <span class="o">=</span> <span class="n">moolib</span><span class="o">.</span><span class="n">Rpc</span><span class="p">()</span>
+
+<span class="c1"># Pass into broker or construct your own</span>
+<span class="n">broker</span> <span class="o">=</span> <span class="n">moolib</span><span class="o">.</span><span class="n">Broker</span><span class="p">(</span><span class="n">broker_rpc</span><span class="p">)</span>
+
+<span class="c1"># Call methods on Rpc object or Broker</span>
+<span class="n">broker_rpc</span><span class="o">.</span><span class="n">set_name</span><span class="p">(</span><span class="s2">&quot;broker&quot;</span><span class="p">)</span>
+<span class="n">broker_rpc</span><span class="o">.</span><span class="n">listen</span><span class="p">(</span><span class="n">flags</span><span class="o">.</span><span class="n">address</span><span class="p">)</span>
+
+<span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+    <span class="n">broker</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.25</span><span class="p">)</span>
+</pre></div>
+</div>
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Broker.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Broker.__init__" title="Permalink to this definition">¶</a></dt>
+<dd><p>Init.</p>
+<p>The <a class="reference internal" href="#moolib.Broker" title="moolib.Broker"><code class="xref py py-class docutils literal notranslate"><span class="pre">Broker</span></code></a> uses an underlying <a class="reference internal" href="moolib.Rpc.html#moolib.Rpc" title="moolib.Rpc"><code class="xref py py-class docutils literal notranslate"><span class="pre">Rpc</span></code></a> object for communication. This
+can be passed in as an argument, or will be constructed by default. As such certain
+calls on the <code class="docutils literal notranslate"><span class="pre">Broker</span></code> are simply transparent calls to the underlying method.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>rpc</strong> (<em>Optional</em><em>[</em><a class="reference internal" href="moolib.Rpc.html#moolib.Rpc" title="moolib.Rpc"><em>moolib.Rpc</em></a><em>]</em>) – An optional <a class="reference internal" href="moolib.Rpc.html#moolib.Rpc" title="moolib.Rpc"><code class="xref py py-class docutils literal notranslate"><span class="pre">Rpc</span></code></a> object to use.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<p class="rubric">Methods</p>
+<table class="longtable docutils align-default">
+<colgroup>
+<col style="width: 10%" />
+<col style="width: 90%" />
+</colgroup>
+<tbody>
+<tr class="row-odd"><td><p><a class="reference internal" href="#moolib.Broker.__init__" title="moolib.Broker.__init__"><code class="xref py py-obj docutils literal notranslate"><span class="pre">__init__</span></code></a></p></td>
+<td><p>Init.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#moolib.Broker.listen" title="moolib.Broker.listen"><code class="xref py py-obj docutils literal notranslate"><span class="pre">listen</span></code></a></p></td>
+<td><p>Call <cite>listen</cite> on the underlying <a class="reference internal" href="moolib.Rpc.html#moolib.Rpc" title="moolib.Rpc"><code class="xref py py-class docutils literal notranslate"><span class="pre">Rpc</span></code></a> peer.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#moolib.Broker.set_name" title="moolib.Broker.set_name"><code class="xref py py-obj docutils literal notranslate"><span class="pre">set_name</span></code></a></p></td>
+<td><p>Call <cite>set_name</cite> on the underlying <a class="reference internal" href="moolib.Rpc.html#moolib.Rpc" title="moolib.Rpc"><code class="xref py py-class docutils literal notranslate"><span class="pre">Rpc</span></code></a> peer.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#moolib.Broker.update" title="moolib.Broker.update"><code class="xref py py-obj docutils literal notranslate"><span class="pre">update</span></code></a></p></td>
+<td><p>Update the state of the Broker.</p></td>
+</tr>
+</tbody>
+</table>
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Broker.listen">
+<span class="sig-name descname"><span class="pre">listen</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Broker.listen" title="Permalink to this definition">¶</a></dt>
+<dd><p>Call <cite>listen</cite> on the underlying <a class="reference internal" href="moolib.Rpc.html#moolib.Rpc" title="moolib.Rpc"><code class="xref py py-class docutils literal notranslate"><span class="pre">Rpc</span></code></a> peer.</p>
+<p>see <a class="reference internal" href="moolib.Rpc.html#moolib.Rpc" title="moolib.Rpc"><code class="xref py py-class docutils literal notranslate"><span class="pre">Rpc</span></code></a> <code class="docutils literal notranslate"><span class="pre">listen</span></code></p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Broker.set_name">
+<span class="sig-name descname"><span class="pre">set_name</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Broker.set_name" title="Permalink to this definition">¶</a></dt>
+<dd><p>Call <cite>set_name</cite> on the underlying <a class="reference internal" href="moolib.Rpc.html#moolib.Rpc" title="moolib.Rpc"><code class="xref py py-class docutils literal notranslate"><span class="pre">Rpc</span></code></a> peer.</p>
+<p>see <a class="reference internal" href="moolib.Rpc.html#moolib.Rpc" title="moolib.Rpc"><code class="xref py py-class docutils literal notranslate"><span class="pre">Rpc</span></code></a> <code class="docutils literal notranslate"><span class="pre">set_name</span></code></p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Broker.update">
+<span class="sig-name descname"><span class="pre">update</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Broker.update" title="Permalink to this definition">¶</a></dt>
+<dd><p>Update the state of the Broker.</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../index.html">moolib</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../index.html">What is Moolib?</a></li>
+</ul>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="moolib.Accumulator.html">moolib.Accumulator</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.Batcher.html">moolib.Batcher</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">moolib.Broker</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.EnvPool.html">moolib.EnvPool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.EnvStepper.html">moolib.EnvStepper</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.Group.html">moolib.Group</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.Rpc.html">moolib.Rpc</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="moolib.create_uid.html">moolib.create_uid</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.set_logging.html">moolib.set_logging</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.set_log_level.html">moolib.set_log_level</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.set_max_threads.html">moolib.set_max_threads</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="moolib.AllReduce.html">moolib.AllReduce</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.Future.html">moolib.Future</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.EnvStepperFuture.html">moolib.EnvStepperFuture</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="moolib.Batcher.html" title="previous chapter">moolib.Batcher</a></li>
+      <li>Next: <a href="moolib.EnvPool.html" title="next chapter">moolib.EnvPool</a></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>$('#searchbox').show(0);</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2021, Facebook AI Research.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 4.1.2</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      
+      |
+      <a href="../_sources/api/moolib.Broker.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

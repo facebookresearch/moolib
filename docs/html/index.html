@@ -1,0 +1,252 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+
+    <title>Moolib Documentation &#8212; moolib  documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css" />
+    <script data-url_root="./" id="documentation_options" src="_static/documentation_options.js"></script>
+    <script src="_static/jquery.js"></script>
+    <script src="_static/underscore.js"></script>
+    <script src="_static/doctools.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="moolib.Accumulator" href="api/moolib.Accumulator.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="moolib-documentation">
+<h1>Moolib Documentation<a class="headerlink" href="#moolib-documentation" title="Permalink to this headline">¶</a></h1>
+<div class="highlight-html notranslate"><div class="highlight"><pre><span></span>moolib  - a communications library for distributed ml training
+
+moolib offers general purpose RPC with automatic transport
+selection (shared memory, tcp/ip, infiniband) allowing models
+to data-parallelise their training and synchronize gradients
+and model weights across many nodes.
+</pre></div>
+</div>
+<div class="toctree-wrapper compound">
+</div>
+<section id="getting-started">
+<h2>Getting Started<a class="headerlink" href="#getting-started" title="Permalink to this headline">¶</a></h2>
+<blockquote>
+<div><p>Install from GitHub</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip install git+https://github.com/facebookresearch/moolib
+</pre></div>
+</div>
+<p>Build from source: <strong>Linux</strong></p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git clone --recursive git@github.com:facebookresearch/moolib
+<span class="nb">cd</span> moolib <span class="o">&amp;&amp;</span> pip install .
+</pre></div>
+</div>
+<p>Build from source: <strong>MacOS</strong></p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git clone --recursive git@github.com:facebookresearch/moolib
+<span class="nb">cd</span> moolib <span class="o">&amp;&amp;</span> <span class="nv">USE_CUDA</span><span class="o">=</span><span class="m">0</span> pip install .
+</pre></div>
+</div>
+<p>How to host docs:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># after installation</span>
+pip install <span class="nv">sphinx</span><span class="o">==</span><span class="m">4</span>.1.2
+<span class="nb">cd</span> docs <span class="o">&amp;&amp;</span> ./run_docs.sh
+</pre></div>
+</div>
+</div></blockquote>
+</section>
+<section id="api">
+<h2>API<a class="headerlink" href="#api" title="Permalink to this headline">¶</a></h2>
+<section id="classes">
+<h3>Classes<a class="headerlink" href="#classes" title="Permalink to this headline">¶</a></h3>
+<table class="longtable docutils align-default">
+<colgroup>
+<col style="width: 10%" />
+<col style="width: 90%" />
+</colgroup>
+<tbody>
+<tr class="row-odd"><td><p><a class="reference internal" href="api/moolib.Accumulator.html#moolib.Accumulator" title="moolib.Accumulator"><code class="xref py py-obj docutils literal notranslate"><span class="pre">Accumulator</span></code></a></p></td>
+<td><p>Accumulate and synchronize gradients and state from multiple peers in the cohort.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="api/moolib.Batcher.html#moolib.Batcher" title="moolib.Batcher"><code class="xref py py-obj docutils literal notranslate"><span class="pre">Batcher</span></code></a></p></td>
+<td><p>A auxiliary class to asynchronously batch tensors into an chosen batch size on a certain device.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="api/moolib.Broker.html#moolib.Broker" title="moolib.Broker"><code class="xref py py-obj docutils literal notranslate"><span class="pre">Broker</span></code></a></p></td>
+<td><p>A class to coordinate a cohort during training.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="api/moolib.EnvPool.html#moolib.EnvPool" title="moolib.EnvPool"><code class="xref py py-obj docutils literal notranslate"><span class="pre">EnvPool</span></code></a></p></td>
+<td><p>A class to run sets of gym-like environments in different processes.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="api/moolib.EnvStepper.html#moolib.EnvStepper" title="moolib.EnvStepper"><code class="xref py py-obj docutils literal notranslate"><span class="pre">EnvStepper</span></code></a></p></td>
+<td><p>A helper class for EnvPool.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="api/moolib.Group.html#moolib.Group" title="moolib.Group"><code class="xref py py-obj docutils literal notranslate"><span class="pre">Group</span></code></a></p></td>
+<td><p>A group of Rpc objects.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="api/moolib.Rpc.html#moolib.Rpc" title="moolib.Rpc"><code class="xref py py-obj docutils literal notranslate"><span class="pre">Rpc</span></code></a></p></td>
+<td><p>A class to execute Remote Procedure Calls.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="methods">
+<h3>Methods<a class="headerlink" href="#methods" title="Permalink to this headline">¶</a></h3>
+<table class="longtable docutils align-default">
+<colgroup>
+<col style="width: 10%" />
+<col style="width: 90%" />
+</colgroup>
+<tbody>
+<tr class="row-odd"><td><p><a class="reference internal" href="api/moolib.create_uid.html#moolib.create_uid" title="moolib.create_uid"><code class="xref py py-obj docutils literal notranslate"><span class="pre">create_uid</span></code></a></p></td>
+<td><p>Generate a unique user id.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="api/moolib.set_logging.html#moolib.set_logging" title="moolib.set_logging"><code class="xref py py-obj docutils literal notranslate"><span class="pre">set_logging</span></code></a></p></td>
+<td><p>Set logging using the python logging module.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="api/moolib.set_log_level.html#moolib.set_log_level" title="moolib.set_log_level"><code class="xref py py-obj docutils literal notranslate"><span class="pre">set_log_level</span></code></a></p></td>
+<td><p>Set the level to log at.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="api/moolib.set_max_threads.html#moolib.set_max_threads" title="moolib.set_max_threads"><code class="xref py py-obj docutils literal notranslate"><span class="pre">set_max_threads</span></code></a></p></td>
+<td><p>Set the maximum number of threads used by the moolib.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="futures">
+<h3>Futures<a class="headerlink" href="#futures" title="Permalink to this headline">¶</a></h3>
+<table class="longtable docutils align-default">
+<colgroup>
+<col style="width: 10%" />
+<col style="width: 90%" />
+</colgroup>
+<tbody>
+<tr class="row-odd"><td><p><a class="reference internal" href="api/moolib.AllReduce.html#moolib.AllReduce" title="moolib.AllReduce"><code class="xref py py-obj docutils literal notranslate"><span class="pre">AllReduce</span></code></a></p></td>
+<td><p>A future result of an AllReduce operation.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="api/moolib.Future.html#moolib.Future" title="moolib.Future"><code class="xref py py-obj docutils literal notranslate"><span class="pre">Future</span></code></a></p></td>
+<td><p>A future result.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="api/moolib.EnvStepperFuture.html#moolib.EnvStepperFuture" title="moolib.EnvStepperFuture"><code class="xref py py-obj docutils literal notranslate"><span class="pre">EnvStepperFuture</span></code></a></p></td>
+<td><p>A future result from an EnvStepper step.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+<section id="examples">
+<h2>Examples<a class="headerlink" href="#examples" title="Permalink to this headline">¶</a></h2>
+<blockquote>
+<div><p>Some examples are in the <code class="docutils literal notranslate"><span class="pre">./examples</span></code> directory.</p>
+</div></blockquote>
+</section>
+<section id="search">
+<h2>Search<a class="headerlink" href="#search" title="Permalink to this headline">¶</a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="search.html"><span class="std std-ref">Search Page</span></a></p></li>
+</ul>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="#">moolib</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">What is Moolib?</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.Accumulator.html">moolib.Accumulator</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.Batcher.html">moolib.Batcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.Broker.html">moolib.Broker</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.EnvPool.html">moolib.EnvPool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.EnvStepper.html">moolib.EnvStepper</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.Group.html">moolib.Group</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.Rpc.html">moolib.Rpc</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.create_uid.html">moolib.create_uid</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.set_logging.html">moolib.set_logging</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.set_log_level.html">moolib.set_log_level</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.set_max_threads.html">moolib.set_max_threads</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.AllReduce.html">moolib.AllReduce</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.Future.html">moolib.Future</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api/moolib.EnvStepperFuture.html">moolib.EnvStepperFuture</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="#">Documentation overview</a><ul>
+      <li>Next: <a href="api/moolib.Accumulator.html" title="next chapter">moolib.Accumulator</a></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>$('#searchbox').show(0);</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2021, Facebook AI Research.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 4.1.2</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      
+      |
+      <a href="_sources/index.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

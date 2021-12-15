@@ -1,0 +1,500 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.17.1: http://docutils.sourceforge.net/" />
+
+    <title>moolib.Accumulator &#8212; moolib  documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css" />
+    <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js"></script>
+    <script src="../_static/jquery.js"></script>
+    <script src="../_static/underscore.js"></script>
+    <script src="../_static/doctools.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="moolib.Batcher" href="moolib.Batcher.html" />
+    <link rel="prev" title="Moolib Documentation" href="../index.html" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="moolib-accumulator">
+<h1>moolib.Accumulator<a class="headerlink" href="#moolib-accumulator" title="Permalink to this headline">¶</a></h1>
+<dl class="py class">
+<dt class="sig sig-object py" id="moolib.Accumulator">
+<em class="property"><span class="pre">class</span> </em><span class="sig-prename descclassname"><span class="pre">moolib.</span></span><span class="sig-name descname"><span class="pre">Accumulator</span></span><a class="headerlink" href="#moolib.Accumulator" title="Permalink to this definition">¶</a></dt>
+<dd><p>Accumulate and synchronize gradients and state from multiple peers in the cohort.</p>
+<p>This class allows for the accumulation and synchronization of gradients and model weights
+during distributed training.  The communication requires an underlying <a class="reference internal" href="moolib.Group.html#moolib.Group" title="moolib.Group"><code class="xref py py-class docutils literal notranslate"><span class="pre">Group</span></code></a> object,
+which can either be  passed into the constructor, or will be created by the accumulator
+during initialisation.</p>
+<p>Many of the calls on the Accumulator involve synchronisation across the network. This occurs
+in the <code class="docutils literal notranslate"><span class="pre">update()</span></code> call, that must be called regularly, throughout training.</p>
+<p class="rubric">Example</p>
+<p>The accumulator takes a moolib <a class="reference internal" href="moolib.Group.html#moolib.Group" title="moolib.Group"><code class="xref py py-class docutils literal notranslate"><span class="pre">Group</span></code></a> to coordinate:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">model</span> <span class="o">=</span> <span class="o">...</span>
+<span class="n">peer</span> <span class="o">=</span> <span class="n">moolib</span><span class="o">.</span><span class="n">Rpc</span><span class="p">()</span>
+<span class="n">group</span> <span class="o">=</span> <span class="n">moolib</span><span class="o">.</span><span class="n">Group</span><span class="p">(</span><span class="n">peer</span><span class="p">,</span> <span class="s2">&quot;foo_group&quot;</span><span class="p">))</span>
+<span class="n">accumulator</span> <span class="o">=</span> <span class="n">moolib</span><span class="o">.</span><span class="n">Accumulator</span><span class="p">(</span><span class="s2">&quot;bar&quot;</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">model</span><span class="o">.</span><span class="n">buffers</span><span class="p">(),</span> <span class="n">group</span><span class="o">=</span><span class="n">group</span><span class="p">)</span>
+<span class="n">accumulator</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">ADDRESS</span><span class="p">)</span>
+
+<span class="n">opt</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">optim</span><span class="o">.</span><span class="n">Adam</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.001</span><span class="p">)</span>
+
+<span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+    <span class="c1"># Update the status of the objects across the network</span>
+    <span class="n">group</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+    <span class="n">accumulator</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+
+    <span class="c1"># 0. Check we are connected.</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">accumulator</span><span class="o">.</span><span class="n">connected</span><span class="p">():</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.25</span><span class="p">)</span>
+        <span class="k">continue</span>
+
+    <span class="c1"># 1. Synchronize our state.</span>
+    <span class="k">if</span> <span class="n">accumulator</span><span class="o">.</span><span class="n">wants_state</span><span class="p">():</span>
+        <span class="n">accumulator</span><span class="o">.</span><span class="n">set_state</span><span class="p">({</span><span class="s2">&quot;optimizer&quot;</span><span class="p">:</span> <span class="n">opt</span><span class="o">.</span><span class="n">state_dict</span><span class="p">()})</span>
+    <span class="k">if</span> <span class="n">accumulator</span><span class="o">.</span><span class="n">has_new_state</span><span class="p">():</span>
+        <span class="n">opt</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">accumulator</span><span class="o">.</span><span class="n">state</span><span class="p">()[</span><span class="s2">&quot;optimizer&quot;</span><span class="p">])</span>
+
+    <span class="c1"># 2. Generate our gradients then reduce them.</span>
+    <span class="k">if</span> <span class="n">accumulator</span><span class="o">.</span><span class="n">wants_gradients</span><span class="p">():</span>
+        <span class="n">y_pred</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">X</span><span class="p">)</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="o">...</span>
+        <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+        <span class="n">accumulator</span><span class="o">.</span><span class="n">reduce_gradients</span><span class="p">(</span><span class="n">batch_size</span><span class="p">)</span> <span class="c1"># has_gradients() -&gt; True after this</span>
+
+    <span class="c1"># 3. Step our gradients then reset.</span>
+    <span class="k">if</span> <span class="n">accumulator</span><span class="o">.</span><span class="n">has_gradients</span><span class="p">():</span>
+        <span class="n">opt</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+        <span class="n">accumulator</span><span class="o">.</span><span class="n">zero_gradients</span><span class="p">()</span>  <span class="c1"># has_gradients() -&gt; False after this</span>
+</pre></div>
+</div>
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.__init__">
+<span class="sig-name descname"><span class="pre">__init__</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.__init__" title="Permalink to this definition">¶</a></dt>
+<dd><p>Init.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">Accumulator</span></code> performs its operations on an underlying <a class="reference internal" href="moolib.Group.html#moolib.Group" title="moolib.Group"><code class="xref py py-class docutils literal notranslate"><span class="pre">Group</span></code></a> object. This can either
+be passed in in the <cite>group</cite> keyword, or will be constructed by the <cite>Accumulator</cite>, with a group
+name based on the <cite>Accumulator</cite>’s name.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>name</strong> (<em>str</em>) – the name of the accumulator.</p></li>
+<li><p><strong>parameters</strong> (<em>Iterable</em><em>[</em><em>torch.Parameter</em><em>]</em>) – the parameters to accumulate - eg <code class="docutils literal notranslate"><span class="pre">model.parameters()</span></code>.</p></li>
+<li><p><strong>buffers</strong> (<em>Iterable</em><em>[</em><em>torch.Tensor</em><em>]</em>) – the buffers to accumulate - eg <code class="docutils literal notranslate"><span class="pre">model.buffers()</span></code>.</p></li>
+<li><p><strong>group</strong> (<em>Optional</em><em>[</em><a class="reference internal" href="moolib.Group.html#moolib.Group" title="moolib.Group"><em>moolib.Group</em></a><em>]</em>) – a <a class="reference internal" href="moolib.Group.html#moolib.Group" title="moolib.Group"><code class="xref py py-class docutils literal notranslate"><span class="pre">Group</span></code></a> on which to perform accumulation. If None,
+a new <a class="reference internal" href="moolib.Group.html#moolib.Group" title="moolib.Group"><code class="xref py py-class docutils literal notranslate"><span class="pre">Group</span></code></a> will be constructed, with a name based on <code class="docutils literal notranslate"><span class="pre">name</span></code> parameter.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<p class="rubric">Methods</p>
+<table class="longtable docutils align-default">
+<colgroup>
+<col style="width: 10%" />
+<col style="width: 90%" />
+</colgroup>
+<tbody>
+<tr class="row-odd"><td><p><a class="reference internal" href="#moolib.Accumulator.__init__" title="moolib.Accumulator.__init__"><code class="xref py py-obj docutils literal notranslate"><span class="pre">__init__</span></code></a></p></td>
+<td><p>Init.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#moolib.Accumulator.connect" title="moolib.Accumulator.connect"><code class="xref py py-obj docutils literal notranslate"><span class="pre">connect</span></code></a></p></td>
+<td><p>Connect the underlying Rpc object to a <a class="reference internal" href="moolib.Broker.html#moolib.Broker" title="moolib.Broker"><code class="xref py py-class docutils literal notranslate"><span class="pre">Broker</span></code></a> at a given network address.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#moolib.Accumulator.connected" title="moolib.Accumulator.connected"><code class="xref py py-obj docutils literal notranslate"><span class="pre">connected</span></code></a></p></td>
+<td><p>Check whether the underlying <a class="reference internal" href="moolib.Group.html#moolib.Group" title="moolib.Group"><code class="xref py py-class docutils literal notranslate"><span class="pre">Group</span></code></a> is connected to a <a class="reference internal" href="moolib.Broker.html#moolib.Broker" title="moolib.Broker"><code class="xref py py-class docutils literal notranslate"><span class="pre">Broker</span></code></a> and is ready to train.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#moolib.Accumulator.get_gradient_stats" title="moolib.Accumulator.get_gradient_stats"><code class="xref py py-obj docutils literal notranslate"><span class="pre">get_gradient_stats</span></code></a></p></td>
+<td><p>Return a dict of statistics about the gradients syncing process.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#moolib.Accumulator.get_leader" title="moolib.Accumulator.get_leader"><code class="xref py py-obj docutils literal notranslate"><span class="pre">get_leader</span></code></a></p></td>
+<td><p>Returns the name of the leader in the group.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#moolib.Accumulator.has_gradients" title="moolib.Accumulator.has_gradients"><code class="xref py py-obj docutils literal notranslate"><span class="pre">has_gradients</span></code></a></p></td>
+<td><p>Returns <code class="docutils literal notranslate"><span class="pre">True</span></code> if the accumulator has gradients that have been reduced.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#moolib.Accumulator.has_new_state" title="moolib.Accumulator.has_new_state"><code class="xref py py-obj docutils literal notranslate"><span class="pre">has_new_state</span></code></a></p></td>
+<td><p>Returns <code class="docutils literal notranslate"><span class="pre">True</span></code> if the accumulator been given a new state to sync.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#moolib.Accumulator.is_leader" title="moolib.Accumulator.is_leader"><code class="xref py py-obj docutils literal notranslate"><span class="pre">is_leader</span></code></a></p></td>
+<td><p>Return true iff this peer is the leader of the group.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#moolib.Accumulator.model_version" title="moolib.Accumulator.model_version"><code class="xref py py-obj docutils literal notranslate"><span class="pre">model_version</span></code></a></p></td>
+<td><p>Return the current model version.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#moolib.Accumulator.reduce_gradients" title="moolib.Accumulator.reduce_gradients"><code class="xref py py-obj docutils literal notranslate"><span class="pre">reduce_gradients</span></code></a></p></td>
+<td><p>Reduce sum of the gradients across all the accumulators.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#moolib.Accumulator.set_model_version" title="moolib.Accumulator.set_model_version"><code class="xref py py-obj docutils literal notranslate"><span class="pre">set_model_version</span></code></a></p></td>
+<td><p>Set the current model version.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#moolib.Accumulator.set_parallel_gradients" title="moolib.Accumulator.set_parallel_gradients"><code class="xref py py-obj docutils literal notranslate"><span class="pre">set_parallel_gradients</span></code></a></p></td>
+<td><p>Set the number of parallel gradient reduction operations.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#moolib.Accumulator.set_state" title="moolib.Accumulator.set_state"><code class="xref py py-obj docutils literal notranslate"><span class="pre">set_state</span></code></a></p></td>
+<td><p>Set the user state for synchronization.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#moolib.Accumulator.set_virtual_batch_size" title="moolib.Accumulator.set_virtual_batch_size"><code class="xref py py-obj docutils literal notranslate"><span class="pre">set_virtual_batch_size</span></code></a></p></td>
+<td><p>Set the virtual batch size of the reduction operation.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#moolib.Accumulator.skip_gradients" title="moolib.Accumulator.skip_gradients"><code class="xref py py-obj docutils literal notranslate"><span class="pre">skip_gradients</span></code></a></p></td>
+<td><p>Force the accumulator to skip this round of gradient reductions.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#moolib.Accumulator.state" title="moolib.Accumulator.state"><code class="xref py py-obj docutils literal notranslate"><span class="pre">state</span></code></a></p></td>
+<td><p>Returns the current user state.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#moolib.Accumulator.update" title="moolib.Accumulator.update"><code class="xref py py-obj docutils literal notranslate"><span class="pre">update</span></code></a></p></td>
+<td><p>Update the state of the accumulator across the network.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#moolib.Accumulator.wants_gradients" title="moolib.Accumulator.wants_gradients"><code class="xref py py-obj docutils literal notranslate"><span class="pre">wants_gradients</span></code></a></p></td>
+<td><p>Returns <code class="docutils literal notranslate"><span class="pre">True</span></code> if the accumulator is ready to reduce more gradients or skip gradients.</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#moolib.Accumulator.wants_state" title="moolib.Accumulator.wants_state"><code class="xref py py-obj docutils literal notranslate"><span class="pre">wants_state</span></code></a></p></td>
+<td><p>Returns <code class="docutils literal notranslate"><span class="pre">True</span></code> if the accumulator has requested a new state to sync.</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#moolib.Accumulator.zero_gradients" title="moolib.Accumulator.zero_gradients"><code class="xref py py-obj docutils literal notranslate"><span class="pre">zero_gradients</span></code></a></p></td>
+<td><p>Reset the gradients of the accumulator to zero.</p></td>
+</tr>
+</tbody>
+</table>
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.connect">
+<span class="sig-name descname"><span class="pre">connect</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.connect" title="Permalink to this definition">¶</a></dt>
+<dd><p>Connect the underlying Rpc object to a <a class="reference internal" href="moolib.Broker.html#moolib.Broker" title="moolib.Broker"><code class="xref py py-class docutils literal notranslate"><span class="pre">Broker</span></code></a> at a given network address.</p>
+<p>This is a non-blocking call, and moolib will maintain this connection by regularly reconnecting
+if the connection is lost.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>address</strong> (<em>str</em>) – address to connect to (eg: <code class="docutils literal notranslate"><span class="pre">&quot;127.0.0.1:1234&quot;</span></code>)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.connected">
+<span class="sig-name descname"><span class="pre">connected</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.connected" title="Permalink to this definition">¶</a></dt>
+<dd><p>Check whether the underlying <a class="reference internal" href="moolib.Group.html#moolib.Group" title="moolib.Group"><code class="xref py py-class docutils literal notranslate"><span class="pre">Group</span></code></a> is connected to a <a class="reference internal" href="moolib.Broker.html#moolib.Broker" title="moolib.Broker"><code class="xref py py-class docutils literal notranslate"><span class="pre">Broker</span></code></a> and is ready to train.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns</dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.get_gradient_stats">
+<span class="sig-name descname"><span class="pre">get_gradient_stats</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.get_gradient_stats" title="Permalink to this definition">¶</a></dt>
+<dd><p>Return a dict of statistics about the gradients syncing process.</p>
+<p>This include information about <code class="docutils literal notranslate"><span class="pre">batch_size</span></code>, <code class="docutils literal notranslate"><span class="pre">num_updates</span></code> and <code class="docutils literal notranslate"><span class="pre">num_skipped</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns</dt>
+<dd class="field-odd"><p>statistics about the gradient syncing.</p>
+</dd>
+<dt class="field-even">Return type</dt>
+<dd class="field-even"><p>(dict)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.get_leader">
+<span class="sig-name descname"><span class="pre">get_leader</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.get_leader" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the name of the leader in the group.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns</dt>
+<dd class="field-odd"><p>returns the name of the leader in the group.</p>
+</dd>
+<dt class="field-even">Return type</dt>
+<dd class="field-even"><p>(str)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.has_gradients">
+<span class="sig-name descname"><span class="pre">has_gradients</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.has_gradients" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns <code class="docutils literal notranslate"><span class="pre">True</span></code> if the accumulator has gradients that have been reduced.</p>
+<p>This will return True after a call to <code class="docutils literal notranslate"><span class="pre">reduce_gradients</span></code> or <code class="docutils literal notranslate"><span class="pre">skip_gradients</span></code> has been executed.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns</dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.has_new_state">
+<span class="sig-name descname"><span class="pre">has_new_state</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.has_new_state" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns <code class="docutils literal notranslate"><span class="pre">True</span></code> if the accumulator been given a new state to sync.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns</dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.is_leader">
+<span class="sig-name descname"><span class="pre">is_leader</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.is_leader" title="Permalink to this definition">¶</a></dt>
+<dd><p>Return true iff this peer is the leader of the group.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns</dt>
+<dd class="field-odd"><p>whether this peer is the leader of the group.</p>
+</dd>
+<dt class="field-even">Return type</dt>
+<dd class="field-even"><p>(bool)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.model_version">
+<span class="sig-name descname"><span class="pre">model_version</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.model_version" title="Permalink to this definition">¶</a></dt>
+<dd><p>Return the current model version.
+This number is automatically incremented when <code class="docutils literal notranslate"><span class="pre">zero_gradients</span></code> is called.
+The peer with the highest model version will be selected as the leader.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns</dt>
+<dd class="field-odd"><p>the number of updates.</p>
+</dd>
+<dt class="field-even">Return type</dt>
+<dd class="field-even"><p>n (int)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.reduce_gradients">
+<span class="sig-name descname"><span class="pre">reduce_gradients</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.reduce_gradients" title="Permalink to this definition">¶</a></dt>
+<dd><p>Reduce sum of the gradients across all the accumulators.</p>
+<p>At each step, if <code class="docutils literal notranslate"><span class="pre">wants_gradients</span></code> returns true, either <code class="docutils literal notranslate"><span class="pre">reduce_gradients</span></code> or <code class="docutils literal notranslate"><span class="pre">skip_gradients</span></code>
+must be called.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>batch_size</strong> (<em>int</em>) – The size of the virtual batch_size to reduce to.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.set_model_version">
+<span class="sig-name descname"><span class="pre">set_model_version</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.set_model_version" title="Permalink to this definition">¶</a></dt>
+<dd><p>Set the current model version.</p>
+<p>The default value is:</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>n</strong> (<em>int</em>) – the virtual batch size.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.set_parallel_gradients">
+<span class="sig-name descname"><span class="pre">set_parallel_gradients</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.set_parallel_gradients" title="Permalink to this definition">¶</a></dt>
+<dd><p>Set the number of parallel gradient reduction operations.</p>
+<p>The default value is:</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>n</strong> (<em>int</em>) – the number of parallel gradient operations.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.set_state">
+<span class="sig-name descname"><span class="pre">set_state</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.set_state" title="Permalink to this definition">¶</a></dt>
+<dd><p>Set the user state for synchronization.</p>
+<p>This state is the user-defined state that must be synchronized for training to be successful.
+This often includes the model weights and optimizer <code class="docutils literal notranslate"><span class="pre">state_dicts</span></code>, along with any other objects.</p>
+<p>This function accepts any objects that can be <code class="docutils literal notranslate"><span class="pre">pickled</span></code>. These objects will what is returned in
+a call to <code class="docutils literal notranslate"><span class="pre">state</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>state</strong> (<em>object</em>) – The current user-defined state to synchronize.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.set_virtual_batch_size">
+<span class="sig-name descname"><span class="pre">set_virtual_batch_size</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.set_virtual_batch_size" title="Permalink to this definition">¶</a></dt>
+<dd><p>Set the virtual batch size of the reduction operation.</p>
+<p>The default value is:</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters</dt>
+<dd class="field-odd"><p><strong>n</strong> (<em>int</em>) – the virtual batch size.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.skip_gradients">
+<span class="sig-name descname"><span class="pre">skip_gradients</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.skip_gradients" title="Permalink to this definition">¶</a></dt>
+<dd><p>Force the accumulator to skip this round of gradient reductions.</p>
+<p>At each step, if <code class="docutils literal notranslate"><span class="pre">wants_gradients</span></code> returns true, either <code class="docutils literal notranslate"><span class="pre">reduce_gradients</span></code> or <code class="docutils literal notranslate"><span class="pre">skip_gradients</span></code>
+must be called.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.state">
+<span class="sig-name descname"><span class="pre">state</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.state" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns the current user state.</p>
+<p>See <code class="docutils literal notranslate"><span class="pre">set_state</span></code> for more details on what is returned.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns</dt>
+<dd class="field-odd"><p>The state (as set in <code class="docutils literal notranslate"><span class="pre">set_state</span></code>)</p>
+</dd>
+<dt class="field-even">Return type</dt>
+<dd class="field-even"><p>Object</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.update">
+<span class="sig-name descname"><span class="pre">update</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.update" title="Permalink to this definition">¶</a></dt>
+<dd><p>Update the state of the accumulator across the network.</p>
+<p>This call executes the communication of the accumulator with the network, including connecting to the
+network, sending or receiving state updates.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.wants_gradients">
+<span class="sig-name descname"><span class="pre">wants_gradients</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.wants_gradients" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns <code class="docutils literal notranslate"><span class="pre">True</span></code> if the accumulator is ready to reduce more gradients or skip gradients.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns</dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.wants_state">
+<span class="sig-name descname"><span class="pre">wants_state</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.wants_state" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns <code class="docutils literal notranslate"><span class="pre">True</span></code> if the accumulator has requested a new state to sync.</p>
+<p>This is required for new peers to get their initial state to start training, and is used to
+ensure synchronization of the state during training. The new state can be set using <code class="docutils literal notranslate"><span class="pre">set_state</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns</dt>
+<dd class="field-odd"><p>bool</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="moolib.Accumulator.zero_gradients">
+<span class="sig-name descname"><span class="pre">zero_gradients</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#moolib.Accumulator.zero_gradients" title="Permalink to this definition">¶</a></dt>
+<dd><p>Reset the gradients of the accumulator to zero.</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../index.html">moolib</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../index.html">What is Moolib?</a></li>
+</ul>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">moolib.Accumulator</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.Batcher.html">moolib.Batcher</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.Broker.html">moolib.Broker</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.EnvPool.html">moolib.EnvPool</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.EnvStepper.html">moolib.EnvStepper</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.Group.html">moolib.Group</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.Rpc.html">moolib.Rpc</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="moolib.create_uid.html">moolib.create_uid</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.set_logging.html">moolib.set_logging</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.set_log_level.html">moolib.set_log_level</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.set_max_threads.html">moolib.set_max_threads</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="moolib.AllReduce.html">moolib.AllReduce</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.Future.html">moolib.Future</a></li>
+<li class="toctree-l1"><a class="reference internal" href="moolib.EnvStepperFuture.html">moolib.EnvStepperFuture</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="../index.html" title="previous chapter">Moolib Documentation</a></li>
+      <li>Next: <a href="moolib.Batcher.html" title="next chapter">moolib.Batcher</a></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>$('#searchbox').show(0);</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2021, Facebook AI Research.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 4.1.2</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      
+      |
+      <a href="../_sources/api/moolib.Accumulator.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
