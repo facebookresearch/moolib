@@ -1,0 +1,24 @@
+[flake8]
+ignore =
+    B001,  # Do not use bare `except:`
+    B008,  # Do not perform calls in argument defaults.
+    B950,  # line too long
+    C901,  # Function is too complex
+    E203,  # Whitespace before ':' (breaks black)
+    E266,  ## Too many leading '#' for block comment
+    E302,  # Expected 2 blank lines, found 0
+    E501,  # Line too long
+    E722,  # do not use bare 'except'
+    E731,  # Do not assign a lambda expression, use a def
+    W503   # Line break occurred before a binary operator
+# 80 to use as a soft test
+max-line-length = 80
+max-complexity = 18
+select = B,C,E,F,W,T4,B9
+exclude =
+    .git
+    __pycache__,
+    build,
+    dist,
+    src,  # non-python and third-party code.
+    atari_preprocessing.py  # third-party code.

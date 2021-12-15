@@ -1,0 +1,65 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+hydra:
+  job_logging:
+    formatters:
+      simple:
+        format: ${log_fmt}
+  run:
+    dir: "${localdir}"
+
+actor_batch_size: 128
+baseline_cost: 0.5
+batch_size: 32
+connect: 127.0.0.1:4431
+device: cuda:0
+discounting: 0.99
+entity: null
+entropy_cost: 0.0006
+env:
+  name: "ALE/Pong-v5"  # See https://brosa.ca/blog/ale-release-v0.7
+  repeat_action_probability: 0.0  # Sticky action probability
+  num_action_repeats: 4
+  noop_max: 30
+fixup_init: true
+grad_norm_clipping: 40
+group: group
+local_name: "${uid:}"
+log_fmt: "[%(levelname)s:${local_name} %(module)s:%(lineno)d %(asctime)s] %(message)s"
+log_interval: 10
+checkpoint_interval: 600
+checkpoint_history_interval: 3600
+num_actor_batches: 2
+num_actor_cpus: 10
+optimizer:
+  learning_rate: 0.0006
+  beta_1: 0.9  # PyTorch default: 0.9
+  beta_2: 0.999  # PyTorch default: 0.999
+  epsilon: 1e-8  # PyTorch default: 1e-08
+project: project
+# Savedir is used for storing the checkpoint(s),
+# including flags and any global settings/stats for the training
+# localdir (which is a subdirectory of savedir) should be used
+# for storing logs and anything local to each instance
+savedir: "/checkpoint/${oc.env:USER}/hackrl/${project}/${group}"
+localdir: "${savedir}/peers/${local_name}"
+state_counter: none
+total_steps: 50e6  # 200M steps w/ frame skipping.
+unroll_length: 20
+use_lstm: false
+virtual_batch_size: 32
+reward_clip: 1.0
+wandb: true
+warmup: 0

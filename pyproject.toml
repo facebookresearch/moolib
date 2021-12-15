@@ -1,0 +1,18 @@
+[tool.black]
+line-length = 88
+include = '\.pyi?$'
+exclude = '''
+(
+  /(
+    \.eggs
+    | \.git
+    | src\/backward-cpp
+    | src\/fmt
+    | src\/pybind11
+    | src\/tensorpipe
+  )/
+  | atari_preprocessing\.py
+)
+'''
+[tool.isort]
+force_single_line = true

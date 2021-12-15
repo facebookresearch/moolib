@@ -1,0 +1,12 @@
+[submodule "src/tensorpipe"]
+	path = src/tensorpipe
+	url = https://github.com/pytorch/tensorpipe
+[submodule "third_party/pybind11"]
+	path = third_party/pybind11
+	url = https://github.com/pybind/pybind11.git
+[submodule "third_party/backward-cpp"]
+	path = third_party/backward-cpp
+	url = https://github.com/bombela/backward-cpp.git
+[submodule "third_party/fmt"]
+	path = third_party/fmt
+	url = https://github.com/fmtlib/fmt

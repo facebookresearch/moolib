@@ -1,0 +1,33 @@
+name: clang-format
+
+on:
+  push:
+    paths:
+      - "**.c"
+      - "**.cc"
+      - "**.h"
+      - "!src/backward-cpp/**"
+      - "!src/fmt/**"
+      - "!src/pybind11/**"
+      - "!src/tensorpipe/**"
+  pull_request:
+    paths:
+      - "**.c"
+      - "**.cc"
+      - "**.h"
+      - "!src/backward-cpp/**"
+      - "!src/fmt/**"
+      - "!src/pybind11/**"
+      - "!src/tensorpipe/**"
+
+jobs:
+  clang_format:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - uses: DoozyX/clang-format-lint-action@v0.12
+      with:
+        source: '.'
+        exclude: './src/pybind11 ./src/fmt ./src/backward-cpp'
+        clangFormatVersion: 12

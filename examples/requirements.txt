@@ -1,0 +1,2 @@
+gym[atari, accept-rom-license]
+opencv-python
