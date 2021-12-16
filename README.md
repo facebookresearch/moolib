@@ -1,3 +1,13 @@
+<a href="https://github.com/facebookresearch/moolib/actions/workflows/run_python_tests.yml">
+  <img src="https://github.com/facebookresearch/moolib/actions/workflows/run_python_tests.yml/badge.svg?branch=main" />
+</a>
+<a href="https://github.com/facebookresearch/moolib/actions/workflows/black_flake8.yml">
+  <img src="https://github.com/facebookresearch/moolib/actions/workflows/black_flake8.yml/badge.svg?branch=main" />
+</a>
+<a href="https://github.com/facebookresearch/moolib/actions/workflows/clang-format.yml">
+  <img src="https://github.com/facebookresearch/moolib/actions/workflows/clang-format.yml/badge.svg?branch=main" />
+</a>
+
 # moolib
 
 moolib - a communications library for distributed ML training
