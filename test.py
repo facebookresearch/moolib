@@ -11,6 +11,8 @@ import os
 
 import bwgame
 
+import unittypes
+
 
 @contextlib.contextmanager
 def no_echo():
@@ -23,9 +25,52 @@ def no_echo():
 
 
 UNIT_CHARS = {
-    bwgame.UnitTypes.Zerg_Ultralisk: "U",
-    bwgame.UnitTypes.Special_Power_Generator: "G",
+    bwgame.UnitTypes(index): char
+    for index, (_, char, _) in enumerate(unittypes.UNITTYPES)
 }
+
+UNIT_COLORS = {
+    bwgame.UnitTypes(index): color
+    for index, (_, _, color) in enumerate(unittypes.UNITTYPES)
+}
+
+COLOR2INT = {
+    "black": 0,
+    "red": 1,
+    "green": 2,
+    "brown": 3,  # on IBM, low-intensity yellow is brown
+    "blue": 4,
+    "magenta": 5,
+    "cyan": 6,
+    "gray": 7,  # low-intensity white
+    "no_color": 8,
+    "orange": 9,
+    "bright_green": 10,
+    "yellow": 11,
+    "bright_blue": 12,
+    "bright_magenta": 13,
+    "bright_cyan": 14,
+    "white": 15,
+}
+
+
+def tty_render(chars, colors):
+    """Returns chars as string with ANSI escape sequences."""
+    rows, cols = len(chars), len(chars[0])
+    result = ""
+    for i in range(rows):
+        result += "\n"
+        for j in range(cols):
+            if not colors[i][j]:
+                result += chars[i][j]
+                continue
+            result += "\033[%d;3%dm%s\033[0m" % (
+                # & 8 checks for brightness.
+                bool(colors[i][j] & 8),
+                colors[i][j] & ~8,
+                chars[i][j],
+            )
+    return result + "\033[0m"
 
 
 def main():
@@ -53,20 +98,25 @@ def main():
         colno = rect.to.x // 32
         rowno = rect.to.y // 32
 
-        scene = [[" " for _ in range(colno)] for _ in range(rowno)]
+        chars = [[" " for _ in range(colno)] for _ in range(rowno)]
+        colors = [[0 for _ in range(colno)] for _ in range(rowno)]
 
         for unit in st.visible_units():
-            try:
-                char = UNIT_CHARS[unit.unit_type.id]
-            except ValueError:
+            char = UNIT_CHARS.get(unit.unit_type.id)
+            if char is None:
                 print("unknown", unit)
                 continue
-            scene[unit.position.y // 32][unit.position.x // 32] = char
+            chars[unit.position.y // 32][unit.position.x // 32] = char
+
+            color = UNIT_COLORS.get(unit.unit_type.id)
+            if color == "default" or color is None:
+                continue
+            colors[unit.position.y // 32][unit.position.x // 32] = COLOR2INT[color]
 
         print("-" * colno)
-        for row in scene:
-            print("".join(row))
-        print("-" * colno)
+        print(tty_render(chars, colors))
+        framecount = "Frame %i " % st.current_frame
+        print("%s%s" % (framecount, "-" * (colno - len(framecount))))
 
         if go_back:
             print("\033[%dA" % (rowno + 2))

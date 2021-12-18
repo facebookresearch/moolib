@@ -20,6 +20,7 @@ PYBIND11_MODULE(bwgame, m) {
       /**/;
 
   py::class_<state>(m, "State")
+      .def_readonly("current_frame", &state::current_frame)
       .def_readonly("players", &state::players)
       .def_readwrite("lcg_rand_state", &state::lcg_rand_state)
       .def(
