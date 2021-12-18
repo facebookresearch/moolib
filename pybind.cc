@@ -60,6 +60,9 @@ PYBIND11_MODULE(bwgame, m) {
   py::class_<action_functions>(m, "ActionFunctions")
       .def(py::init<state &, action_state &>(), py::arg("st"),
            py::arg("action_st"))
+      .def_property_readonly(
+          "st", [](const action_functions &self) -> state & { return self.st; },
+          py::return_value_policy::reference)
       .def("map_bounds", &action_functions::map_bounds)
       .def("trigger_create_unit", &action_functions::trigger_create_unit,
            py::arg("unit_type"), py::arg("pos"), py::arg("owner"),

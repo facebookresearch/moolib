@@ -73,6 +73,36 @@ def tty_render(chars, colors):
     return result + "\033[0m"
 
 
+def print_scene(funcs, go_back=True):
+    rect = funcs.map_bounds()
+
+    colno = rect.to.x // 32
+    rowno = rect.to.y // 32
+
+    chars = [[" " for _ in range(colno)] for _ in range(rowno)]
+    colors = [[0 for _ in range(colno)] for _ in range(rowno)]
+
+    for unit in funcs.st.visible_units():
+        char = UNIT_CHARS.get(unit.unit_type.id)
+        if char is None:
+            print("unknown", unit)
+            continue
+        chars[unit.position.y // 32][unit.position.x // 32] = char
+
+        color = UNIT_COLORS.get(unit.unit_type.id)
+        if color == "default" or color is None:
+            continue
+        colors[unit.position.y // 32][unit.position.x // 32] = COLOR2INT[color]
+
+    print("-" * colno)
+    print(tty_render(chars, colors))
+    framecount = "Frame %i " % funcs.st.current_frame
+    print("%s%s" % (framecount, "-" * (colno - len(framecount))))
+
+    if go_back:
+        print("\033[%dA" % (rowno + 2))
+
+
 def main():
     player = bwgame.GamePlayer(".")
     st = player.st()
@@ -91,35 +121,6 @@ def main():
 
     action_st = bwgame.ActionState()
     funcs = bwgame.ActionFunctions(st, action_st)
-
-    def print_scene(go_back=True):
-        rect = funcs.map_bounds()
-
-        colno = rect.to.x // 32
-        rowno = rect.to.y // 32
-
-        chars = [[" " for _ in range(colno)] for _ in range(rowno)]
-        colors = [[0 for _ in range(colno)] for _ in range(rowno)]
-
-        for unit in st.visible_units():
-            char = UNIT_CHARS.get(unit.unit_type.id)
-            if char is None:
-                print("unknown", unit)
-                continue
-            chars[unit.position.y // 32][unit.position.x // 32] = char
-
-            color = UNIT_COLORS.get(unit.unit_type.id)
-            if color == "default" or color is None:
-                continue
-            colors[unit.position.y // 32][unit.position.x // 32] = COLOR2INT[color]
-
-        print("-" * colno)
-        print(tty_render(chars, colors))
-        framecount = "Frame %i " % st.current_frame
-        print("%s%s" % (framecount, "-" * (colno - len(framecount))))
-
-        if go_back:
-            print("\033[%dA" % (rowno + 2))
 
     def test(aensnared, bensnared):
         awins = bwins = 0
@@ -168,7 +169,7 @@ def main():
                 funcs.next_frame()
 
                 if t % 100 == 0:
-                    print_scene()
+                    print_scene(funcs)
 
                     with no_echo():
                         ch = ord(os.read(0, 1))
