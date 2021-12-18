@@ -5,6 +5,8 @@
 #include "actions.h"
 #include "bwgame.h"
 
+#include "pybwenums.h"
+
 namespace py = pybind11;
 
 using namespace bwgame;
@@ -88,9 +90,6 @@ PYBIND11_MODULE(bwgame, m) {
 
   py::class_<order_type_t>(m, "OrderType");
 
-  py::enum_<Orders>(m, "Orders").value("AttackDefault", Orders::AttackDefault)
-      /**/;
-
   py::class_<xy>(m, "XY")
       .def(py::init<>())
       .def(py::init<int, int>())
@@ -131,11 +130,6 @@ PYBIND11_MODULE(bwgame, m) {
 
       /**/;
 
-  py::enum_<UnitTypes>(m, "UnitTypes")
-      .value("Zerg_Ultralisk", UnitTypes::Zerg_Ultralisk)
-      .value("Special_Power_Generator", UnitTypes::Special_Power_Generator)
-      /**/;
-
   py::class_<unit_type_t>(m, "UnitType").def_readonly("id", &unit_type_t::id)
       /**/;
 
@@ -143,4 +137,6 @@ PYBIND11_MODULE(bwgame, m) {
       .def("integer_part", &direction_t::integer_part)
       .def("fractional_part", &direction_t::fractional_part)
       /**/;
+
+  pybwenums::define_enums(m);
 }

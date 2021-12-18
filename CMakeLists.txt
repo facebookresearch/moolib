@@ -20,5 +20,5 @@ ExternalProject_Add(
 
 # pybind11 python library.
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third_party/pybind11)
-pybind11_add_module(bwgame pybind.cc)
+pybind11_add_module(bwgame pybind.cc pybwenums.cc)
 target_include_directories(bwgame PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openbw)

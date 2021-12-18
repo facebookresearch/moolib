@@ -63,12 +63,13 @@ def main():
                 continue
             scene[unit.position.y // 32][unit.position.x // 32] = char
 
+        print("-" * colno)
         for row in scene:
             print("".join(row))
         print("-" * colno)
 
         if go_back:
-            print("\033[%dA" % (rowno + 1))
+            print("\033[%dA" % (rowno + 2))
 
     def test(aensnared, bensnared):
         awins = bwins = 0
@@ -124,8 +125,8 @@ def main():
                     if ch == ord("q"):
                         return
 
-                if funcs.unit_dead(a) or funcs.unit_dead(b):
-                    break
+                    if funcs.unit_dead(a) or funcs.unit_dead(b):
+                        break
 
             if not funcs.unit_dead(a):
                 awins += 1
