@@ -90,6 +90,8 @@ PYBIND11_MODULE(bwgame, m) {
            py::arg("target_unit_type"), py::arg("queue"))
       .def("get_order_type", &action_functions::get_order_type, py::arg("id"),
            py::return_value_policy::reference)
+      .def("get_first_selected_unit",
+           &action_functions::get_first_selected_unit, py::arg("owner"))
       /**/;
 
   py::class_<order_type_t>(m, "OrderType");
@@ -112,12 +114,52 @@ PYBIND11_MODULE(bwgame, m) {
            static_cast<xy (xy::*)(const xy &) const>(&xy::operator/))
       .def("__floordiv__",
            static_cast<xy (xy::*)(int &&) const>(&xy::operator/))
+      .def(
+          "__getitem__",
+          [](const xy &self, int index) {
+            if (index < 0) {
+              index = (index + (index % 2)) % 2;
+            }
+            switch (index) {
+            case 0:
+              return self.x;
+            case 1:
+              return self.y;
+            default:
+              throw py::index_error(
+                  format("Index must be 0 or 1, got %i", index));
+            }
+          },
+          py::arg("index"))
+      .def("__len__", [](const xy &self) { return 2; })
       /**/;
 
   py::class_<rect>(m, "Rect")
       .def(py::init<xy, xy>(), py::arg("from"), py::arg("to"))
       .def_readwrite("from", &rect::from)
       .def_readwrite("to", &rect::to)
+      .def(
+          "__getitem__",
+          [](const rect &self, int index) {
+            if (index < 0) {
+              index = (index + (index % 4)) % 4;
+            }
+            switch (index) {
+            case 0:
+              return self.from.x;
+            case 1:
+              return self.from.y;
+            case 2:
+              return self.to.x;
+            case 3:
+              return self.to.y;
+            default:
+              throw py::index_error(
+                  format("Index must be between 0 and 3, got %i", index));
+            }
+          },
+          py::arg("index"))
+      .def("__len__", [](const rect &self) { return 4; })
       /**/;
 
   py::class_<unit_t>(m, "Unit")
