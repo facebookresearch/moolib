@@ -13,7 +13,7 @@ def test(funcs, aensnared, bensnared):
     pos_a = funcs.map_bounds().to // 2 - bwgame.XY(0, 10)
     pos_b = funcs.map_bounds().to // 2 + bwgame.XY(0, 10)
 
-    for i in range(100):
+    for _ in range(100):
         a = funcs.trigger_create_unit(
             funcs.get_unit_type(bwgame.UnitTypes.Zerg_Ultralisk), pos_a, 0
         )
@@ -21,7 +21,7 @@ def test(funcs, aensnared, bensnared):
             funcs.get_unit_type(bwgame.UnitTypes.Zerg_Ultralisk), pos_b, 1
         )
         if a is None or b is None:
-            raise "Failed to spawn"
+            raise RuntimeError("Failed to spawn")
 
         a.heading = funcs.xy_direction(b.position - a.position)
         b.heading = funcs.xy_direction(a.position - b.position)
@@ -51,8 +51,10 @@ def test(funcs, aensnared, bensnared):
         if bensnared:
             funcs.ensnare_unit(b)
 
-        for t in range(1000):
+        for _ in range(1000):
             funcs.next_frame()
+            if funcs.unit_dead(a) or funcs.unit_dead(b):
+                break
 
         if not funcs.unit_dead(a):
             awins += 1
@@ -74,7 +76,7 @@ def test(funcs, aensnared, bensnared):
 def measure(title, f):
     results = []
 
-    for i in range(10):
+    for _ in range(10):
         aw, bw = f()
         winrate = aw / (aw + bw)
         results.append(winrate)
