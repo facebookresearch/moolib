@@ -3,13 +3,60 @@
 #   https://gist.github.com/tscmoo/f10446517515828828b0a188ca3911a2
 #
 
+import collections
 import contextlib
 import curses
+import enum
 import random
 
 import bwgame
 
 import unittypes
+
+
+class Color(enum.IntEnum):
+    BLACK = 0
+    RED = 1
+    GREEN = 2
+    BROWN = 3  # On IBM, low-intensity yellow is brown.
+    BLUE = 4
+    MAGENTA = 5
+    CYAN = 6
+    GRAY = 7  # Low-intensity white.
+    NO_COLOR = 8
+    ORANGE = 9
+    BRIGHT_GREEN = 10
+    YELLOW = 11
+    BRIGHT_BLUE = 12
+    BRIGHT_MAGENTA = 13
+    BRIGHT_CYAN = 14
+    WHITE = 15
+
+
+def init_colors():
+    curses.use_default_colors()
+    curses.init_pair(1, curses.COLOR_BLACK, -1)
+    curses.init_pair(2, curses.COLOR_RED, -1)
+    curses.init_pair(3, curses.COLOR_GREEN, -1)
+    curses.init_pair(4, curses.COLOR_YELLOW, -1)  # Actually brown.
+    curses.init_pair(5, curses.COLOR_BLUE, -1)
+    curses.init_pair(6, curses.COLOR_MAGENTA, -1)
+    curses.init_pair(7, curses.COLOR_CYAN, -1)
+    curses.init_pair(8, curses.COLOR_WHITE, -1)  # Gray.
+    curses.init_pair(9, -1, -1)
+
+    # "Bright black" is dark gray.
+    colors = [curses.color_pair(Color.BLACK + 1) | curses.A_BOLD]
+
+    # Low-intensity colors.
+    for c in range(Color.RED, Color.ORANGE):
+        colors.append(curses.color_pair(c + 1))
+
+    # Bright versions.
+    for c in range(Color.RED, len(Color)):
+        colors.append(colors[c] | curses.A_BOLD)
+
+    return colors
 
 
 @contextlib.contextmanager
@@ -27,32 +74,24 @@ def scr():
         curses.endwin()
 
 
-UNIT_CHARS = {
-    bwgame.UnitTypes(index): char
-    for index, (_, char, _) in enumerate(unittypes.UNITTYPES)
-}
-
-UNIT_COLORS = {
-    bwgame.UnitTypes(index): color
-    for index, (_, _, color) in enumerate(unittypes.UNITTYPES)
+SYMSET = {
+    bwgame.UnitTypes(index): (char, color)
+    for index, (_, char, color) in enumerate(unittypes.UNITTYPES)
 }
 
 
-def print_scene(funcs, win):
-    win.erase()
+def print_scene(g):
+    g.pad.erase()
 
-    for unit in funcs.st.visible_units():
-        char = UNIT_CHARS.get(unit.unit_type.id)
+    for unit in g.funcs.st.visible_units():
+        char, color = SYMSET.get(unit.unit_type.id, (None, None))
         if char is None:
             print("unknown", unit)
             continue
-
-        win.insch(unit.position.y // 32, unit.position.x // 32, char)
-
-        color = UNIT_COLORS.get(unit.unit_type.id)
         if color == "default" or color is None:
-            continue
-        del color  # TODO: Use.
+            color = "no_color"
+        color = g.colors[Color[color.upper()]]
+        g.pad.insch(unit.position.y // 32, unit.position.x // 32, char, color)
 
 
 def ultratest(funcs, aensnared, bensnared):
@@ -121,6 +160,11 @@ def ultratest(funcs, aensnared, bensnared):
         funcs.kill_unit(b)
 
 
+InstanceGlobals = collections.namedtuple(
+    "InstanceGlobals", ["funcs", "pad", "botl", "colors", "scrrows", "scrcols"]
+)
+
+
 def main():
     player = bwgame.GamePlayer(".")
     st = player.st()
@@ -141,17 +185,28 @@ def main():
     funcs = bwgame.ActionFunctions(st, action_st)
 
     with scr() as stdscr:
+        colors = init_colors()
         mapcols, maprows = funcs.map_bounds().to // 32
         pad = curses.newpad(maprows, mapcols)
         pad.keypad(True)  # Get curses.KEY_LEFT etc.
+        curses.mousemask(-1)
         pminrow, pmincol = maprows // 2, mapcols // 4  # Starting pos of pad.
 
         scrrows, scrcols = stdscr.getmaxyx()
 
         botl = curses.newwin(1, scrcols, scrrows - 1, 0)
 
+        g = InstanceGlobals(
+            funcs=funcs,
+            pad=pad,
+            botl=botl,
+            colors=colors,
+            scrrows=scrrows,
+            scrcols=scrcols,
+        )
+
         for _ in ultratest(funcs, False, False):
-            print_scene(funcs, pad)
+            print_scene(g)
 
             botl.addstr(0, 0, "Frame %i" % funcs.st.current_frame, curses.A_REVERSE)
             botl.noutrefresh()
@@ -166,16 +221,24 @@ def main():
             curses.doupdate()
             ch = pad.getch()
             if ch == ord("q"):
-                return
-            elif ch == curses.KEY_DOWN:
+                break
+            elif ch == (ord("j"), curses.KEY_DOWN):
                 pminrow += 1
-                print("down")
-            elif ch == curses.KEY_UP:
+            elif ch in (ord("k"), curses.KEY_UP):
                 pminrow -= 1
-            elif ch == curses.KEY_LEFT:
+            elif ch in (ord("h"), curses.KEY_LEFT):
                 pmincol -= 10
-            elif ch == curses.KEY_RIGHT:
+            elif ch in (ord("l"), curses.KEY_RIGHT):
                 pmincol += 10
+            elif ch == curses.KEY_RESIZE:
+                scrrows, scrcols = stdscr.getmaxyx()
+                botl.mvwin(scrrows - 1, 0)
+            elif ch == ord("\t"):
+                pass  # Tab.
+            elif ch == curses.KEY_MOUSE:
+                print(curses.getmouse())
+
+    print("Thanks for playing.")
 
 
 if __name__ == "__main__":
