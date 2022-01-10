@@ -54,7 +54,7 @@ To build from source:
     git clone --recursive git@github.com:facebookresearch/moolib
     cd moolib && pip install .
 
-How to host docs (after installation):
+How to host [docs](https://facebookresearch.github.io/moolib/) (after installation):
 
     pip install sphinx==4.1.2
     cd docs && ./run_docs.sh
@@ -90,6 +90,10 @@ To start an experiment with a single peer:
 To add more peers to this experiment, start more processes with the
 same `project` and `group` settings, using a different setting for
 `device` (default: `'cuda:0'`).
+
+## Documentation
+
+See [`moolib`'s API documentation](https://facebookresearch.github.io/moolib/).
 
 ## Benchmarks
 
