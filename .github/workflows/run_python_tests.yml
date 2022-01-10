@@ -9,7 +9,7 @@ on:
 
 jobs:
   run_python_tests:
-    name: Python Tests on ${{ matrix.os }} w/ Py${{ matrix.python-version }}
+    name: ${{ matrix.os }} w/ Py${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
