@@ -22,3 +22,47 @@ ExternalProject_Add(
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third_party/pybind11)
 pybind11_add_module(bwgame pybind.cc pybwenums.cc)
 target_include_directories(bwgame PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openbw)
+
+find_package(SDL2 REQUIRED)
+
+find_path(SDL2_IMAGE_INCLUDE_DIR
+  SDL_image.h
+  PATH_SUFFIXES SDL2
+  include/SDL2 include
+)
+find_library(SDL2_IMAGE_LIBRARY
+  NAMES SDL2_image
+  PATH_SUFFIXES lib
+)
+
+find_path(SDL2_MIXER_INCLUDE_DIR
+  SDL_mixer.h
+  PATH_SUFFIXES SDL2
+  include/SDL2 include
+)
+find_library(SDL2_MIXER_LIBRARY
+  NAMES SDL2_mixer
+  PATH_SUFFIXES lib
+)
+
+add_executable(gfxtest
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openbw/ui/gfxtest.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openbw/ui/sdl2.cpp
+  cc/mallocfree.c
+)
+target_include_directories(gfxtest
+  PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/openbw
+  ${SDL2_INCLUDE_DIRS}
+  ${SDL2_IMAGE_INCLUDE_DIR}
+)
+target_link_libraries(gfxtest
+  ${SDL2_LIBRARIES}
+  ${SDL2_IMAGE_LIBRARY}
+  ${SDL2_MIXER_LIBRARY}
+)
+
+add_custom_target(link_replay
+  ALL
+  COMMAND ${CMAKE_COMMAND} -E create_symlink "${CMAKE_CURRENT_SOURCE_DIR}/flash_vs_jaedong.rep" maps/p49.rep
+)
