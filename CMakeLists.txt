@@ -62,7 +62,9 @@ target_link_libraries(gfxtest
   ${SDL2_MIXER_LIBRARY}
 )
 
-add_custom_target(link_replay
-  ALL
-  COMMAND ${CMAKE_COMMAND} -E create_symlink "${CMAKE_CURRENT_SOURCE_DIR}/flash_vs_jaedong.rep" maps/p49.rep
+add_custom_command(
+  DEPENDS "flash_vs_jaedong.rep"
+  OUTPUT maps/p49.rep
+  COMMAND ${CMAKE_COMMAND} -E create_symlink "../../flash_vs_jaedong.rep" maps/p49.rep
 )
+add_custom_target(link_replay ALL DEPENDS maps/p49.rep)
