@@ -4,6 +4,7 @@
 
 #include "actions.h"
 #include "bwgame.h"
+#include "replay.h"
 
 #include "pybwenums.h"
 
@@ -185,4 +186,35 @@ PYBIND11_MODULE(bwgame, m) {
       /**/;
 
   pybwenums::define_enums(m);
+
+  /* From replay.h. */
+  py::class_<replay_state>(m, "ReplayState")
+      .def(py::init<>())
+      .def_readonly("end_frame", &replay_state::end_frame)
+      .def_readonly("map_name", &replay_state::map_name)
+      .def_readonly("player_name", &replay_state::player_name)
+      .def_readonly("game_type", &replay_state::game_type)
+      /**/
+      ;
+
+  py::class_<replay_functions, action_functions>(m, "ReplayFunctions")
+      .def(py::init<state &, action_state &, replay_state &>(), py::arg("st"),
+           py::arg("action_st"), py::arg("replay_st"))
+      .def_property_readonly(
+          "replay_st",
+          [](const replay_functions &self) -> replay_state & {
+            return self.replay_st;
+          },
+          py::return_value_policy::reference)
+      .def(
+          "load_replay_file",
+          [](replay_functions &self, a_string filename,
+             bool initial_processing) {
+            self.load_replay_file(std::move(filename), initial_processing);
+          },
+          py::arg("filename"), py::arg("initial_processing") = true)
+      .def("next_frame", &replay_functions::next_frame)
+      .def("is_done", &replay_functions::is_done)
+      /**/
+      ;
 }
