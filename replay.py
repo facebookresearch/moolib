@@ -7,6 +7,7 @@ import collections
 import contextlib
 import curses
 import enum
+import time
 
 import bwgame
 
@@ -120,7 +121,6 @@ def main():
     funcs = bwgame.ReplayFunctions(st, action_st, replay_st)
     funcs.load_replay_file("maps/p49.rep")
 
-    units = set()
     with scr() as stdscr:
         colors = init_colors()
         mapcols, maprows = funcs.map_bounds().to // 32
@@ -144,15 +144,13 @@ def main():
             scrcols=scrcols,
         )
 
+        pad.nodelay(True)
+        time_delta = 0.02
+
         while not funcs.is_done():
             print_scene(g)
+            time.sleep(time_delta)
             funcs.next_frame()
-
-            if st.current_frame % 50 != 0:
-                continue
-
-            for unit in g.funcs.st.visible_units():
-                units.add(unit.unit_type.id)
 
             botl.addstr(0, 0, "Frame %i" % funcs.st.current_frame, curses.A_REVERSE)
             botl.noutrefresh()
@@ -161,7 +159,9 @@ def main():
 
             curses.doupdate()
             ch = pad.getch()
-            if ch == ord("q"):
+            if ch == -1:  # No input.
+                continue
+            elif ch == ord("q"):
                 break
             elif ch in (ord("j"), curses.KEY_DOWN):
                 pminrow += min(10, maprows - pminrow - scrrows + 1)
@@ -176,11 +176,14 @@ def main():
                 botl.mvwin(scrrows - 1, 0)
             elif ch == ord("\t"):
                 pass  # Tab.
+            elif ch == ord("+"):
+                time_delta /= 2
+            elif ch == ord("-"):
+                time_delta *= 2
             elif ch == curses.KEY_MOUSE:
                 print(curses.getmouse())
 
     print("Thanks for playing.")
-    print(units)
 
 
 if __name__ == "__main__":
