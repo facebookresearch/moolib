@@ -3,9 +3,9 @@
 #   https://gist.github.com/tscmoo/f10446517515828828b0a188ca3911a2
 #
 
-import collections
 import contextlib
 import curses
+import dataclasses
 import enum
 import time
 
@@ -31,6 +31,12 @@ class Color(enum.IntEnum):
     BRIGHT_MAGENTA = 13
     BRIGHT_CYAN = 14
     WHITE = 15
+
+    @classmethod
+    def get(cls, name):
+        if name is None or name == "default":
+            return cls.NO_COLOR
+        return cls[name.upper()]
 
 
 def init_colors():
@@ -80,6 +86,32 @@ SYMSET = {
 }
 
 
+class ColorMode(enum.Enum):
+    CUSTOM = 0
+    RACE = 1
+    PLAYER = 2
+    FRIENDFOE = 3
+
+
+PLAYERCOLORS = [
+    Color.RED,
+    Color.BRIGHT_BLUE,
+    Color.CYAN,  # Teal.
+    Color.MAGENTA,  # Purple.
+    Color.ORANGE,
+    Color.BROWN,  # Green on ice maps.
+    Color.WHITE,
+    Color.YELLOW,
+]
+
+RACECOLORS = {
+    bwgame.Race.zerg: Color.MAGENTA,
+    bwgame.Race.terran: Color.BRIGHT_BLUE,
+    bwgame.Race.protoss: Color.YELLOW,
+    bwgame.Race.none: Color.WHITE,
+}
+
+
 def print_scene(g):
     g.pad.erase()
 
@@ -88,9 +120,15 @@ def print_scene(g):
         if char is None:
             print("unknown", unit)
             continue
-        if color == "default" or color is None:
-            color = "no_color"
-        color = g.colors[Color[color.upper()]]
+        race = g.funcs.unit_race(unit)
+        if g.colormode == ColorMode.CUSTOM or race == bwgame.Race.none:
+            color = g.colors[Color.get(color)]
+        elif g.colormode == ColorMode.RACE:
+            color = g.colors[RACECOLORS[race]]
+        elif g.colormode == ColorMode.PLAYER:
+            color = g.colors[PLAYERCOLORS[unit.owner]]
+        elif g.colormode == ColorMode.FRIENDFOE:
+            color = g.colors[Color.ORANGE if unit.owner else Color.BRIGHT_GREEN]
         if g.funcs.ut_building(unit.unit_type):
             color |= curses.A_REVERSE
         g.pad.insch(unit.position.y // 32, unit.position.x // 32, char, color)
@@ -107,9 +145,15 @@ def replay(funcs):
             yield
 
 
-InstanceGlobals = collections.namedtuple(
-    "InstanceGlobals", ["funcs", "pad", "botl", "colors", "scrrows", "scrcols"]
-)
+@dataclasses.dataclass
+class InstanceGlobals:
+    funcs: bwgame.StateFunctions
+    pad: curses.window
+    botl: curses.window
+    colors: list
+    scrrows: int
+    scrcols: int
+    colormode: ColorMode
 
 
 def main():
@@ -142,6 +186,7 @@ def main():
             colors=colors,
             scrrows=scrrows,
             scrcols=scrcols,
+            colormode=ColorMode.PLAYER,
         )
 
         pad.nodelay(True)
@@ -175,7 +220,7 @@ def main():
                 scrrows, scrcols = stdscr.getmaxyx()
                 botl.mvwin(scrrows - 1, 0)
             elif ch == ord("\t"):
-                pass  # Tab.
+                g.colormode = ColorMode((g.colormode.value + 1) % len(ColorMode))
             elif ch == ord("+"):
                 time_delta /= 2
             elif ch == ord("-"):

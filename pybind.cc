@@ -123,6 +123,18 @@ PYBIND11_MODULE(bwgame, m) {
             return self.ut_resource(ut);
           },
           py::arg("ut"))
+      .def(
+          "unit_race",
+          [](const state_functions &self, const unit_type_t *ut) {
+            return self.unit_race(ut);
+          },
+          py::arg("ut"))
+      .def(
+          "unit_race",
+          [](const state_functions &self, const unit_t *u) {
+            return self.unit_race(u);
+          },
+          py::arg("u"))
       /**/;
 
   py::class_<action_functions, state_functions>(m, "ActionFunctions")
@@ -210,6 +222,7 @@ PYBIND11_MODULE(bwgame, m) {
       /**/;
 
   py::class_<unit_t>(m, "Unit")
+      .def_readonly("owner", &unit_t::owner)
       .def_readonly("index", &unit_t::index)
       .def_readonly("position", &unit_t::position)
       .def_readonly("unit_type", &unit_t::unit_type)
@@ -225,6 +238,12 @@ PYBIND11_MODULE(bwgame, m) {
 
   py::class_<unit_type_t>(m, "UnitType").def_readonly("id", &unit_type_t::id)
       /**/;
+
+  py::enum_<race_t>(m, "Race")
+      .value("zerg", race_t::zerg)
+      .value("terran", race_t::terran)
+      .value("protoss", race_t::protoss)
+      .value("none", race_t::none);
 
   py::class_<direction_t>(m, "Direction")
       .def("integer_part", &direction_t::integer_part)
