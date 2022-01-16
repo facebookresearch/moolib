@@ -180,8 +180,20 @@ def main():
                 time_delta /= 2
             elif ch == ord("-"):
                 time_delta *= 2
+            elif ch == ord("c"):
+                botl.erase()
             elif ch == curses.KEY_MOUSE:
-                print(curses.getmouse())
+                _, x, y, *_ = curses.getmouse()
+                x += pmincol
+                y += pminrow
+                area = funcs.square_at(bwgame.XY(x, y) * 32, 32)
+                for u in funcs.find_units(area):
+                    botl.addstr(
+                        0,
+                        10,
+                        "%s: %s" % (u, unittypes.UNITTYPES[u.unit_type.id][0]),
+                    )
+                    break
 
     print("Thanks for playing.")
 

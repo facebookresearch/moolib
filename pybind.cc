@@ -12,6 +12,19 @@ namespace py = pybind11;
 
 using namespace bwgame;
 
+/*
+  Slightly complicated way to extend the lifetime of the return value of
+  state_functions::find_units.
+*/
+struct UnitFinderSearchWrapper {
+  struct noexpand {};
+  state_functions::unit_finder_search ufs;
+  UnitFinderSearchWrapper(const state_functions &funcs, rect area)
+      : ufs{funcs.find_units(std::move(area))} {};
+  UnitFinderSearchWrapper(const state_functions &funcs, rect area, noexpand)
+      : ufs{funcs.find_units_noexpand(std::move(area))} {};
+};
+
 PYBIND11_MODULE(bwgame, m) {
   py::class_<game_player, std::shared_ptr<game_player>>(m, "GamePlayer")
       .def(py::init<std::string>(), py::arg("data_path"))
@@ -58,6 +71,14 @@ PYBIND11_MODULE(bwgame, m) {
   py::class_<action_state>(m, "ActionState").def(py::init<>())
       /**/;
 
+  py::class_<UnitFinderSearchWrapper, std::shared_ptr<UnitFinderSearchWrapper>>(
+      m, "UnitFinderSearch")
+      .def("__iter__",
+           [](std::shared_ptr<UnitFinderSearchWrapper> &self) {
+             return py::make_iterator(self->ufs);
+           })
+      /**/;
+
   py::class_<state_functions>(m, "StateFunctions")
       .def(py::init<state &>(), py::arg("st"))
       .def_property_readonly(
@@ -75,6 +96,22 @@ PYBIND11_MODULE(bwgame, m) {
            py::arg("deselect") = true)
       .def("kill_unit", &state_functions::kill_unit, py::arg("u"))
       .def("ensnare_unit", &state_functions::ensnare_unit, py::arg("u"))
+      .def("square_at", &state_functions::square_at, py::arg("pos"),
+           py::arg("half_width"))
+      .def(
+          "find_units",
+          [](const state_functions &self, rect area) {
+            return std::make_shared<UnitFinderSearchWrapper>(self,
+                                                             std::move(area));
+          },
+          py::arg("area"), py::keep_alive<0, 1>())
+      .def(
+          "find_units_noexpand",
+          [](const state_functions &self, rect area) {
+            return std::make_shared<UnitFinderSearchWrapper>(
+                self, std::move(area), UnitFinderSearchWrapper::noexpand());
+          },
+          py::arg("area"), py::keep_alive<0, 1>())
       .def(
           "xy_direction",
           [](const state_functions &self, xy pos) {
