@@ -110,6 +110,8 @@ PYBIND11_MODULE(bwgame, m) {
             return self.xy_direction(pos);
           },
           py::arg("pos"))
+      .def("player_slot_active", &state_functions::player_slot_active,
+           py::arg("n"))
       /* TODO: Handle unit_t as well, as in C++. */
       .def(
           "ut_building",

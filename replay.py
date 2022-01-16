@@ -128,7 +128,10 @@ def print_scene(g):
         elif g.colormode == ColorMode.PLAYER:
             color = g.colors[PLAYERCOLORS[unit.owner]]
         elif g.colormode == ColorMode.FRIENDFOE:
-            color = g.colors[Color.ORANGE if unit.owner else Color.BRIGHT_GREEN]
+            for n in range(8):
+                if g.funcs.player_slot_active(n):
+                    break
+            color = g.colors[Color.BRIGHT_GREEN if unit.owner == n else Color.ORANGE]
         if g.funcs.ut_building(unit.unit_type):
             color |= curses.A_REVERSE
         g.pad.insch(unit.position.y // 32, unit.position.x // 32, char, color)
