@@ -90,6 +90,8 @@ def print_scene(g):
         if color == "default" or color is None:
             color = "no_color"
         color = g.colors[Color[color.upper()]]
+        if g.funcs.ut_building(unit.unit_type):
+            color |= curses.A_REVERSE
         g.pad.insch(unit.position.y // 32, unit.position.x // 32, char, color)
 
 
@@ -125,9 +127,11 @@ def main():
         pad = curses.newpad(maprows, mapcols)
         pad.keypad(True)  # Get curses.KEY_LEFT etc.
         curses.mousemask(-1)
-        pminrow, pmincol = maprows // 2, mapcols // 4  # Starting pos of pad.
 
         scrrows, scrcols = stdscr.getmaxyx()
+        # Starting pos of pad: Middle of map.
+        pminrow = maprows // 2 - scrrows // 2
+        pmincol = mapcols // 2 - scrcols // 2
 
         botl = curses.newwin(1, scrcols, scrrows - 1, 0)
 
@@ -153,25 +157,20 @@ def main():
             botl.addstr(0, 0, "Frame %i" % funcs.st.current_frame, curses.A_REVERSE)
             botl.noutrefresh()
 
-            unit = funcs.get_first_selected_unit(0)
-            if unit is not None:
-                pad.move(*reversed(unit.position // 32))
-            else:
-                pad.move(0, 0)
             pad.noutrefresh(pminrow, pmincol, 0, 0, scrrows - 2, scrcols - 1)
 
             curses.doupdate()
             ch = pad.getch()
             if ch == ord("q"):
                 break
-            elif ch == (ord("j"), curses.KEY_DOWN):
-                pminrow += 1
+            elif ch in (ord("j"), curses.KEY_DOWN):
+                pminrow += min(10, maprows - pminrow - scrrows + 1)
             elif ch in (ord("k"), curses.KEY_UP):
-                pminrow -= 1
+                pminrow -= min(10, pminrow)
             elif ch in (ord("h"), curses.KEY_LEFT):
-                pmincol -= 10
+                pmincol -= min(10, pmincol)
             elif ch in (ord("l"), curses.KEY_RIGHT):
-                pmincol += 10
+                pmincol += min(10, mapcols - pmincol - scrcols + 1)
             elif ch == curses.KEY_RESIZE:
                 scrrows, scrcols = stdscr.getmaxyx()
                 botl.mvwin(scrrows - 1, 0)

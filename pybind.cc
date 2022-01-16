@@ -58,30 +58,47 @@ PYBIND11_MODULE(bwgame, m) {
   py::class_<action_state>(m, "ActionState").def(py::init<>())
       /**/;
 
-  py::class_<action_functions>(m, "ActionFunctions")
-      .def(py::init<state &, action_state &>(), py::arg("st"),
-           py::arg("action_st"))
+  py::class_<state_functions>(m, "StateFunctions")
+      .def(py::init<state &>(), py::arg("st"))
       .def_property_readonly(
-          "st", [](const action_functions &self) -> state & { return self.st; },
+          "st", [](const state_functions &self) -> state & { return self.st; },
           py::return_value_policy::reference)
-      .def("map_bounds", &action_functions::map_bounds)
-      .def("trigger_create_unit", &action_functions::trigger_create_unit,
+      .def("map_bounds", &state_functions::map_bounds)
+      .def("trigger_create_unit", &state_functions::trigger_create_unit,
            py::arg("unit_type"), py::arg("pos"), py::arg("owner"),
            py::return_value_policy::reference)
-      .def("get_unit_type", &action_functions::get_unit_type, py::arg("id"),
+      .def("get_unit_type", &state_functions::get_unit_type, py::arg("id"),
            py::return_value_policy::reference)
-      .def("unit_dead", &action_functions::unit_dead)
-      .def("next_frame", &action_functions::next_frame)
-      .def("hide_unit", &action_functions::hide_unit, py::arg("u"),
+      .def("unit_dead", &state_functions::unit_dead)
+      .def("next_frame", &state_functions::next_frame)
+      .def("hide_unit", &state_functions::hide_unit, py::arg("u"),
            py::arg("deselect") = true)
-      .def("kill_unit", &action_functions::kill_unit, py::arg("u"))
-      .def("ensnare_unit", &action_functions::ensnare_unit, py::arg("u"))
+      .def("kill_unit", &state_functions::kill_unit, py::arg("u"))
+      .def("ensnare_unit", &state_functions::ensnare_unit, py::arg("u"))
       .def(
           "xy_direction",
-          [](const action_functions &self, xy pos) {
+          [](const state_functions &self, xy pos) {
             return self.xy_direction(pos);
           },
           py::arg("pos"))
+      /* TODO: Handle unit_t as well, as in C++. */
+      .def(
+          "ut_building",
+          [](const state_functions &self, const unit_type_t *ut) {
+            return self.ut_building(ut);
+          },
+          py::arg("ut"))
+      .def(
+          "ut_resource",
+          [](const state_functions &self, const unit_type_t *ut) {
+            return self.ut_resource(ut);
+          },
+          py::arg("ut"))
+      /**/;
+
+  py::class_<action_functions, state_functions>(m, "ActionFunctions")
+      .def(py::init<state &, action_state &>(), py::arg("st"),
+           py::arg("action_st"))
       .def("action_select",
            static_cast<bool (action_functions::*)(int, unit_t *)>(
                &action_functions::action_select),
@@ -210,6 +227,7 @@ PYBIND11_MODULE(bwgame, m) {
           "load_replay_file",
           [](replay_functions &self, a_string filename,
              bool initial_processing) {
+            // TODO: Consider returning third argument.
             self.load_replay_file(std::move(filename), initial_processing);
           },
           py::arg("filename"), py::arg("initial_processing") = true)
