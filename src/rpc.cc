@@ -1746,6 +1746,7 @@ struct Rpc::Impl {
                 } else {
                   log("null connection\n");
                 }
+                cleanup(v, defer);
                 i = b.map.erase(i);
               } else {
                 ++i;
@@ -2459,6 +2460,14 @@ struct Rpc::Impl {
     auto s = fmt::sprintf(fmt, std::forward<Args>(args)...);
     rpc::log("%s: %s", myName, s);
   }
+
+  void cleanup(Rpc::Impl::Incoming& o, Deferrer& defer) {
+    defer([resend = std::move(o.resend.buffer), recv = std::move(o.recv.buffer)] {});
+  }
+
+  void cleanup(Rpc::Impl::Outgoing& o, Deferrer& defer) {
+    defer([resend = std::move(o.resend.buffer), recv = std::move(o.recv.buffer), response = std::move(o.response)] {});
+  }
 };
 
 template<typename API>
@@ -2592,7 +2601,7 @@ struct RpcImpl : RpcImplBase {
   }
 
   template<bool isIncoming, typename T>
-  void handleAck(T& container, PeerImpl& peer, uint32_t rid) {
+  void handleAck(T& container, PeerImpl& peer, uint32_t rid, Deferrer& defer) {
     auto& bucket = rpc.getBucket(container, rid);
     std::optional<std::chrono::steady_clock::duration> duration;
     {
@@ -2622,6 +2631,7 @@ struct RpcImpl : RpcImplBase {
           peer.addRecentIncoming(rid, now + std::chrono::minutes(1));
           listErase(&x);
           log("peer %s rid %#x acked and freed\n", peer.name, rid);
+          rpc.cleanup(x, defer);
           bucket.map.erase(i);
         }
       }
@@ -2669,7 +2679,7 @@ struct RpcImpl : RpcImplBase {
     case Rpc::reqAck: {
       // Peer acknowledged that it has received the response
       // (return value of an RPC call)
-      handleAck<true>(rpc.incoming_, peer, rid);
+      handleAck<true>(rpc.incoming_, peer, rid, defer);
       break;
     }
     case Rpc::reqPoke: {
@@ -2821,6 +2831,7 @@ struct RpcImpl : RpcImplBase {
                     rpc.totalResponseSize_ -= i->resend.buffer->size;
                   }
                   i->peer->addRecentIncoming(i->rid, now + std::chrono::minutes(1));
+                  me->rpc.cleanup(*i, defer);
                   iBucket.map.erase(i->rid);
                   me->log("permanent timeout of response for peer %s rid %#x!?\n", i->peer->name, i->rid);
                 }
@@ -2855,7 +2866,7 @@ struct RpcImpl : RpcImplBase {
       break;
     }
     case Rpc::reqAck: {
-      handleAck<false>(rpc.outgoing_, peer, rid);
+      handleAck<false>(rpc.outgoing_, peer, rid, defer);
       break;
     }
     case Rpc::reqNack: {
@@ -2910,6 +2921,7 @@ struct RpcImpl : RpcImplBase {
             // log("got response for rid %#x from %s\n", rid, peer.name);
             response = std::move(i->second.response);
             ofid = i->second.fid;
+            rpc.cleanup(i->second, defer);
             oBucket.map.erase(i);
           } else {
             // log("got response for unknown rid %#x from %s\n", rid, peer.name);
