@@ -39,6 +39,7 @@ ships with a reference implementations
 [Atari](examples/atari/environment.py) that can easily be adapted to
 other environments or algorithms.
 
+
 ## Installing
 
 **To compile `moolib` without CUDA support**
@@ -58,6 +59,7 @@ How to host [docs](https://facebookresearch.github.io/moolib/) (after installati
 
     pip install sphinx==4.1.2
     cd docs && ./run_docs.sh
+
 
 ## Run an Example
 
@@ -91,9 +93,12 @@ To add more peers to this experiment, start more processes with the
 same `project` and `group` settings, using a different setting for
 `device` (default: `'cuda:0'`).
 
+
 ## Documentation
 
-See [`moolib`'s API documentation](https://facebookresearch.github.io/moolib/).
+  * [`moolib` whitepaper](docs/moolib_whitepaper.pdf).
+  * [`moolib`'s API documentation](https://facebookresearch.github.io/moolib/).
+
 
 ## Benchmarks
 
@@ -102,6 +107,19 @@ See [`moolib`'s API documentation](https://facebookresearch.github.io/moolib/).
 ![atari_1](./docs/atari_1.png)
 ![atari_2](./docs/atari_2.png)
 </details>
+
+
+## Citation
+
+```
+@article{moolib2022,
+  title  = {{moolib:  A Platform for Distributed RL}},
+  author = {Vegard Mella and Eric Hambro and Danielle Rothermel and Heinrich K{\"{u}}ttler},
+  year   = {2022},
+  url    = {https://github.com/facebookresearch/moolib},
+}
+```
+
 
 ## License
 
