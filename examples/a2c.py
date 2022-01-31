@@ -158,7 +158,7 @@ def a2c_loss(state, action, reward, done, initial_core_state, model):
     # cross_entropy = cross_entropy.view_as(returns)
 
     pg_loss = -torch.mean(cross_entropy * advantages.detach())
-    baseline_loss = 0.5 * torch.mean(advantages ** 2)
+    baseline_loss = 0.5 * torch.mean(advantages**2)
     entropy_loss = torch.mean(policy * log_policy)
 
     return pg_loss, baseline_loss, entropy_loss

@@ -62,7 +62,7 @@ class LearnerState:
 
 
 def compute_baseline_loss(advantages):
-    return 0.5 * torch.mean(advantages ** 2)
+    return 0.5 * torch.mean(advantages**2)
 
 
 def compute_entropy_loss(logits):
