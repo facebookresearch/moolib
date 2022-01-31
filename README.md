@@ -53,12 +53,8 @@ To install from GitHub:
 To build from source:
 
     git clone --recursive git@github.com:facebookresearch/moolib
-    cd moolib && pip install .
-
-How to host [docs](https://facebookresearch.github.io/moolib/) (after installation):
-
-    pip install sphinx==4.1.2
-    cd docs && ./run_docs.sh
+    cd moolib
+    pip install .
 
 
 ## Run an Example
