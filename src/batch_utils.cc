@@ -25,24 +25,24 @@ namespace {
 template<class Function>
 void visitNested(Function func, const py::handle& input) {
   if (py::isinstance<py::tuple>(input)) {
-    const py::tuple& src = py::reinterpret_borrow<py::tuple>(input);
-    for (const auto& x : src) {
+    const py::tuple src = py::reinterpret_borrow<py::tuple>(input);
+    for (const auto x : src) {
       visitNested(func, x);
     }
     return;
   }
 
   if (py::isinstance<py::list>(input)) {
-    const py::list& src = py::reinterpret_borrow<py::list>(input);
-    for (const auto& x : src) {
+    const py::list src = py::reinterpret_borrow<py::list>(input);
+    for (const auto x : src) {
       visitNested(func, x);
     }
     return;
   }
 
   if (py::isinstance<py::dict>(input)) {
-    const py::dict& src = py::reinterpret_borrow<py::dict>(input);
-    for (const auto& [k, v] : src) {
+    const py::dict src = py::reinterpret_borrow<py::dict>(input);
+    for (const auto [k, v] : src) {
       visitNested(func, v);
     }
     return;
@@ -54,32 +54,32 @@ void visitNested(Function func, const py::handle& input) {
 template<class Function>
 py::object mapNested(Function func, const py::handle& input) {
   if (py::isinstance<py::tuple>(input)) {
-    const py::tuple& src = py::reinterpret_borrow<py::tuple>(input);
+    const py::tuple src = py::reinterpret_borrow<py::tuple>(input);
     const int64_t n = src.size();
     py::tuple dst(n);
     for (int64_t i = 0; i < n; ++i) {
       dst[i] = mapNested(func, src[i]);
     }
-    return dst;
+    return std::move(dst);
   }
 
   if (py::isinstance<py::list>(input)) {
-    const py::list& src = py::reinterpret_borrow<py::list>(input);
+    const py::list src = py::reinterpret_borrow<py::list>(input);
     const int64_t n = src.size();
     py::list dst(n);
     for (int64_t i = 0; i < n; ++i) {
       dst[i] = mapNested(func, src[i]);
     }
-    return dst;
+    return std::move(dst);
   }
 
   if (py::isinstance<py::dict>(input)) {
-    const py::dict& src = py::reinterpret_borrow<py::dict>(input);
+    const py::dict src = py::reinterpret_borrow<py::dict>(input);
     py::dict dst;
-    for (const auto& [k, v] : src) {
+    for (const auto [k, v] : src) {
       dst[k] = mapNested(func, v);
     }
-    return dst;
+    return std::move(dst);
   }
 
   return func(input);
@@ -91,7 +91,7 @@ py::object mapNested(Function func, const py::handle& input) {
 // should do unsqueeze here.
 std::pair<py::object, bool> squeezeFieldsImpl(const py::handle& input, int64_t dim) {
   if (py::isinstance<py::tuple>(input)) {
-    const py::tuple& src = py::reinterpret_borrow<py::tuple>(input);
+    const py::tuple src = py::reinterpret_borrow<py::tuple>(input);
     const int64_t n = src.size();
     py::tuple dst(n);
     bool anyNode = false;
@@ -108,7 +108,7 @@ std::pair<py::object, bool> squeezeFieldsImpl(const py::handle& input, int64_t d
   }
 
   if (py::isinstance<py::list>(input)) {
-    const py::list& src = py::reinterpret_borrow<py::list>(input);
+    const py::list src = py::reinterpret_borrow<py::list>(input);
     const int64_t n = src.size();
     py::list dst(n);
     for (int64_t i = 0; i < n; ++i) {
@@ -118,9 +118,9 @@ std::pair<py::object, bool> squeezeFieldsImpl(const py::handle& input, int64_t d
   }
 
   if (py::isinstance<py::dict>(input)) {
-    const py::dict& src = py::reinterpret_borrow<py::dict>(input);
+    const py::dict src = py::reinterpret_borrow<py::dict>(input);
     py::dict dst;
-    for (const auto& [k, v] : src) {
+    for (const auto [k, v] : src) {
       dst[k] = std::move(squeezeFieldsImpl(v, dim).first);
     }
     return std::make_pair(std::move(dst), true);
@@ -139,26 +139,26 @@ std::pair<py::object, bool> squeezeFieldsImpl(const py::handle& input, int64_t d
 // The items in the batchTuple are pushed in preorder traversal.
 bool prepareForUnstack(const py::handle& input, std::vector<bool>& batchTuple) {
   if (py::isinstance<py::tuple>(input)) {
-    const py::tuple& src = py::reinterpret_borrow<py::tuple>(input);
+    const py::tuple src = py::reinterpret_borrow<py::tuple>(input);
     const int64_t curIndex = batchTuple.size();
     batchTuple.push_back(false);
     bool anyNode = false;
-    for (const auto& x : src) {
+    for (const auto x : src) {
       anyNode |= prepareForUnstack(x, batchTuple);
     }
     batchTuple[curIndex] = !anyNode;
     return true;
   }
   if (py::isinstance<py::list>(input)) {
-    const py::list& src = py::reinterpret_borrow<py::list>(input);
-    for (const auto& x : src) {
+    const py::list src = py::reinterpret_borrow<py::list>(input);
+    for (const auto x : src) {
       prepareForUnstack(x, batchTuple);
     }
     return true;
   }
   if (py::isinstance<py::dict>(input)) {
-    const py::dict& src = py::reinterpret_borrow<py::dict>(input);
-    for (const auto& [k, v] : src) {
+    const py::dict src = py::reinterpret_borrow<py::dict>(input);
+    for (const auto [k, v] : src) {
       prepareForUnstack(v, batchTuple);
     }
     return true;
@@ -187,7 +187,7 @@ py::tuple unstackSequence(int64_t batchSize, std::vector<py::tuple>& src) {
 py::tuple unstackFieldsImpl(
     const py::handle& input, int64_t batchSize, int64_t dim, const std::vector<bool>& batchTuple, size_t& tupleIndex) {
   if (py::isinstance<py::tuple>(input)) {
-    const py::tuple& src = py::reinterpret_borrow<py::tuple>(input);
+    const py::tuple src = py::reinterpret_borrow<py::tuple>(input);
     if (batchTuple[tupleIndex++]) {
       assert(src.size() == batchSize);
       return src;
@@ -201,7 +201,7 @@ py::tuple unstackFieldsImpl(
   }
 
   if (py::isinstance<py::list>(input)) {
-    const py::list& src = py::reinterpret_borrow<py::list>(input);
+    const py::list src = py::reinterpret_borrow<py::list>(input);
     const int64_t n = src.size();
     std::vector<py::tuple> children(n);
     for (int64_t i = 0; i < n; ++i) {
@@ -211,12 +211,12 @@ py::tuple unstackFieldsImpl(
   }
 
   if (py::isinstance<py::dict>(input)) {
-    const py::dict& src = py::reinterpret_borrow<py::dict>(input);
+    const py::dict src = py::reinterpret_borrow<py::dict>(input);
     py::tuple dst(batchSize);
     for (int64_t i = 0; i < batchSize; ++i) {
       dst[i] = py::dict();
     }
-    for (const auto& [k, v] : src) {
+    for (const auto [k, v] : src) {
       py::list cur = unstackFieldsImpl(v, batchSize, dim, batchTuple, tupleIndex);
       assert(cur.size() == batchSize);
       for (int64_t i = 0; i < batchSize; ++i) {
