@@ -5,7 +5,7 @@
 mkdir build && cd build
 cmake -GNinja
 ninja
-PYTHONPATH=. python ../play.py
+PYTHONPATH=. python ../replay.py
 ```
 
 See also [`tests/ultratest.py`](/tests/ultratest.py) for a Python
