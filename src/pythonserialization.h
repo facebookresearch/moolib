@@ -9,6 +9,8 @@
 
 #include "rpc.h"
 
+#include "fmt/printf.h"
+
 #include "pybind11/numpy.h"
 #include "pybind11/pybind11.h"
 
@@ -166,6 +168,7 @@ struct PickleModule {
   //   - read and readline here will return the entire buffer that was written, regardless of how many bytes
   //     were requested. This works (and is an optimization) because picker has readahead functionality
   //     which triggers, and this is thus handled correctly.
+  //   - readinto requires the requested size to match the buffer size written (1:1 correspondance to a write call)
   // It's unlikely this would work correctly with the pure python version of pickle (or other implementations).
   struct File {
     PyObject_HEAD X* x = nullptr;
@@ -199,6 +202,31 @@ struct PickleModule {
     static PyObject* readline(File* file, [[maybe_unused]] PyObject*) {
       return read(file, nullptr);
     }
+    static PyObject* readinto(File* file, PyObject* arg) {
+      Py_buffer buffer;
+      if (PyObject_GetBuffer(arg, &buffer, PyBUF_SIMPLE | PyBUF_C_CONTIGUOUS) == -1) {
+        return nullptr;
+      }
+      size_t n = buffer.len;
+      if constexpr (!isWrite) {
+        std::string_view buf;
+        (*file->x)(buf);
+        if (n != buf.size()) {
+          PyBuffer_Release(&buffer);
+          PyErr_SetString(
+              PyExc_BufferError,
+              fmt::sprintf("buffer size is %d, but readinto requested %d bytes", buf.size(), n).c_str());
+          return nullptr;
+        }
+        std::memcpy(buffer.buf, buf.data(), n);
+      } else {
+        std::abort();
+      }
+
+      PyBuffer_Release(&buffer);
+
+      return PyLong_FromSize_t(n);
+    }
   };
 
   PyModuleDef moduleDef = {
@@ -208,6 +236,7 @@ struct PickleModule {
       {"write", (PyCFunction)&File::write, METH_O, ""},
       {"read", (PyCFunction)&File::read, METH_O, ""},
       {"readline", (PyCFunction)&File::readline, METH_NOARGS, ""},
+      {"readinto", (PyCFunction)&File::readinto, METH_O, ""},
       {nullptr, nullptr, 0, nullptr}};
   PyTypeObject fileType = {PyVarObject_HEAD_INIT(nullptr, 0)};
 
