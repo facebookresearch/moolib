@@ -1,0 +1,9 @@
+include CMakeLists.txt
+recursive-include docs *
+recursive-include examples *
+recursive-include py *
+recursive-include src *
+recursive-include test *
+recursive-include third_party *
+
+recursive-exclude build *

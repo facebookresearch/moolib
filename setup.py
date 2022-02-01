@@ -72,6 +72,7 @@ def main():
         version="0.0.9",
         description=("A library for distributed ML training with PyTorch"),
         long_description=long_description,
+        long_description_content_type="text/markdown",
         author="tscmoo & the moolib dev team",
         url="https://github.com/facebookresearch/moolib",
         classifiers=[
