@@ -1,3 +1,4 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
 UNITTYPES = [
     ("Terran_Marine", "m", "default"),
     ("Terran_Ghost", "g", "default"),

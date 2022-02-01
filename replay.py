@@ -1,7 +1,4 @@
-#
-# Inspired by C++ example at
-#   https://gist.github.com/tscmoo/f10446517515828828b0a188ca3911a2
-#
+# Copyright (c) Facebook, Inc. and its affiliates.
 
 import contextlib
 import curses

@@ -1,4 +1,4 @@
-
+/* Copyright (c) Facebook, Inc. and its affiliates. */
 #include "bwenums.h"
 
 #include "pybwenums.h"
