@@ -469,10 +469,16 @@ struct QueueWrapper {
       rpc::RpcDeferredReturn<GilWrapper<py::object>> retCallback;
       retCallback.f = [curBatchSize, dim = batchDim,
                        retCallbacks = std::move(retCallbacks)](GilWrapper<py::object> input) mutable {
-        py::tuple batch = utils::unstackFields(*input, curBatchSize, dim);
-        for (int64_t i = 0; i < curBatchSize; ++i) {
-          py::object cur = std::move(batch[i]);
-          retCallbacks[i](std::move(cur));
+        if (input->is_none()) {
+          for (auto& retCallback : retCallbacks) {
+            retCallback(py::none());
+          }
+        } else {
+          py::tuple batch = utils::unstackFields(*input, curBatchSize, dim);
+          for (int64_t i = 0; i < curBatchSize; ++i) {
+            py::object cur = std::move(batch[i]);
+            retCallbacks[i](std::move(cur));
+          }
         }
       };
       py::tuple args = py::reinterpret_borrow<py::tuple>(utils::stackFields(src, batchDim));
