@@ -64,13 +64,29 @@ class CMakeBuild(build_ext.build_ext):
 
 
 def main():
+    with open("README.md") as f:
+        long_description = f.read()
+
     setuptools.setup(
         name="moolib",
+        version="0.0.9",
+        description=("A library for distributed ML training with PyTorch"),
+        long_description=long_description,
+        long_description_content_type="text/markdown",
+        author="tscmoo & the moolib dev team",
+        url="https://github.com/facebookresearch/moolib",
+        classifiers=[
+            "Programming Language :: C++",
+            "Programming Language :: Python :: 3",
+            "License :: OSI Approved :: MIT License",
+            "Operating System :: POSIX :: Linux",
+            "Operating System :: MacOS :: MacOS X",
+            "Environment :: GPU :: NVIDIA CUDA",
+        ],
         packages=["moolib", "moolib.examples.common", "moolib.examples.vtrace"],
         package_dir={"": "py", "moolib.examples": "examples"},
         ext_modules=[setuptools.Extension("moolib._C", sources=[])],
-        install_requires=["torch>=1.4.0"],
-        version="0.0.9",
+        install_requires=["torch>=1.6.0"],
         cmdclass={"build_ext": CMakeBuild},
         zip_safe=False,
     )
