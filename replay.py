@@ -7,6 +7,7 @@ import contextlib
 import curses
 import dataclasses
 import enum
+import sys
 import time
 
 import bwgame
@@ -134,7 +135,18 @@ def print_scene(g):
             color = g.colors[Color.BRIGHT_GREEN if unit.owner == n else Color.ORANGE]
         if g.funcs.ut_building(unit.unit_type):
             color |= curses.A_REVERSE
-        g.pad.insch(unit.position.y // 32, unit.position.x // 32, char, color)
+            w, h = unit.unit_type.placement_size
+            w = min(w, 4)
+            h = min(h, 4)
+        else:
+            w, h = 1, 1
+        wh = bwgame.XY(w, h) * 1
+        area_from = (unit.position - wh // 2) // 32
+        area_to = area_from + wh // 32
+
+        for y in range(area_from.y, area_to.y + 1):
+            for x in range(area_from.x, area_to.x + 1):
+                g.pad.insch(y, x, char, color)
 
 
 def replay(funcs):
@@ -160,25 +172,27 @@ class InstanceGlobals:
 
 
 def main():
+    replay_file = sys.argv[1] if len(sys.argv) > 1 else "maps/p49.rep"
+
     player = bwgame.GamePlayer("")
     st = player.st()
 
     action_st = bwgame.ActionState()
     replay_st = bwgame.ReplayState()
     funcs = bwgame.ReplayFunctions(st, action_st, replay_st)
-    funcs.load_replay_file("maps/p49.rep")
+    funcs.load_replay_file(replay_file)
 
     with scr() as stdscr:
         colors = init_colors()
         mapcols, maprows = funcs.map_bounds().to // 32
         pad = curses.newpad(maprows, mapcols)
         pad.keypad(True)  # Get curses.KEY_LEFT etc.
-        curses.mousemask(-1)
+        curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
 
         scrrows, scrcols = stdscr.getmaxyx()
         # Starting pos of pad: Middle of map.
-        pminrow = maprows // 2 - scrrows // 2
-        pmincol = mapcols // 2 - scrcols // 2
+        pminrow = max(maprows // 2 - scrrows // 2, 0)
+        pmincol = max(mapcols // 2 - scrcols // 2, 0)
 
         botl = curses.newwin(1, scrcols, scrrows - 1, 0)
 

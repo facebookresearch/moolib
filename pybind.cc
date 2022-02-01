@@ -35,6 +35,9 @@ PYBIND11_MODULE(bwgame, m) {
 
   py::class_<player_t> Player(m, "Player");
   Player.def_readwrite("controller", &player_t::controller)
+      .def_readonly("race", &player_t::race)
+      .def_readonly("force", &player_t::force)
+      .def_readonly("color", &player_t::color)
       /**/;
   Player.attr("controller_occupied") =
       py::int_(static_cast<int>(player_t::controller_occupied));
@@ -112,6 +115,7 @@ PYBIND11_MODULE(bwgame, m) {
           py::arg("pos"))
       .def("player_slot_active", &state_functions::player_slot_active,
            py::arg("n"))
+      .def("tile_has_creep", &state_functions::tile_has_creep, py::arg("pos"))
       /* TODO: Handle unit_t as well, as in C++. */
       .def(
           "ut_building",
@@ -238,7 +242,10 @@ PYBIND11_MODULE(bwgame, m) {
 
       /**/;
 
-  py::class_<unit_type_t>(m, "UnitType").def_readonly("id", &unit_type_t::id)
+  py::class_<unit_type_t>(m, "UnitType")
+      .def_readonly("id", &unit_type_t::id)
+      .def_readonly("unit_size", &unit_type_t::unit_size)
+      .def_readonly("placement_size", &unit_type_t::placement_size)
       /**/;
 
   py::enum_<race_t>(m, "Race")
