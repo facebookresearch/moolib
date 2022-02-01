@@ -101,7 +101,7 @@ std::pair<py::object, bool> squeezeFieldsImpl(const py::handle& input, int64_t d
       anyNode |= tag;
     }
     if (n == 1 && !anyNode) {
-      return std::make_pair(std::move(dst[0]), true);
+      return std::make_pair(dst[0], true);
     } else {
       return std::make_pair(std::move(dst), true);
     }
@@ -221,7 +221,7 @@ py::tuple unstackFieldsImpl(
       assert(cur.size() == batchSize);
       for (int64_t i = 0; i < batchSize; ++i) {
         py::dict ret = py::reinterpret_borrow<py::dict>(dst[i]);
-        ret[k] = std::move(cur[i]);
+        ret[k] = cur[i];
       }
     }
     return dst;
