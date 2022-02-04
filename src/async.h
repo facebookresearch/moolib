@@ -32,6 +32,7 @@ struct SchedulerFifo {
 
   void run(Function<void()> f) noexcept;
   void setMaxThreads(size_t nThreads);
+  bool isInThread() const noexcept;
 };
 
 void stopForksFromHereOn();
