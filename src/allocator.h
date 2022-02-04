@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <stdlib.h>
+#include <vector>
 
 namespace rpc {
 
@@ -24,6 +25,11 @@ struct Storage {
   Header* freelist = nullptr;
   size_t freelistSize = 0;
 
+  struct alignas(64) GlobalList {
+    SpinMutex mutex;
+    std::vector<std::pair<Header*, size_t>> list;
+  };
+
   ~Storage() {
     for (Header* ptr = freelist; ptr;) {
       Header* next = ptr->next;
@@ -32,10 +38,21 @@ struct Storage {
     }
   }
 
+  inline static GlobalList global;
+
   Header* allocate() {
     static_assert(alignof(Header) <= 64 && alignof(Data) <= 64 && alignof(Data) <= sizeof(Header));
     Header* r = freelist;
     if (!r) {
+      std::unique_lock l(global.mutex);
+      if (!global.list.empty()) {
+        freelist = global.list.back().first;
+        freelistSize = global.list.back().second;
+        global.list.pop_back();
+        l.unlock();
+        return allocate();
+      }
+      l.unlock();
       r = (Header*)aligned_alloc(64, size);
       new (r) Header();
       r->capacity = size - sizeof(Header);
@@ -58,9 +75,12 @@ struct Storage {
     if (ptr->refcount != 0) {
       std::abort();
     }
-    if (freelistSize >= 1024 * 1024 / Size) {
-      std::free(ptr);
-      return;
+    if (freelistSize >= std::min<size_t>(1024 * 1024 / Size, 128)) {
+      std::unique_lock l(global.mutex);
+      global.list.push_back({freelist, freelistSize});
+      l.unlock();
+      freelist = nullptr;
+      freelistSize = 0;
     }
     ++freelistSize;
     ptr->next = freelist;
@@ -77,6 +97,7 @@ struct Storage {
 
 template<typename Header, typename Data>
 Header* allocate(size_t n) {
+
   constexpr size_t overhead = sizeof(Header);
   if (n + overhead <= 64) {
     return allocimpl::Storage<Header, Data, 64>::get().allocate();
