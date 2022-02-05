@@ -9,6 +9,7 @@
 #include "synchronization.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <list>
 #include <mutex>
