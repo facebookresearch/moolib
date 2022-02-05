@@ -172,6 +172,7 @@ struct PickleModule {
   // It's unlikely this would work correctly with the pure python version of pickle (or other implementations).
   struct File {
     PyObject_HEAD X* x = nullptr;
+    PyObject* o = nullptr;
     static PyObject* write(File* file, PyObject* arg) {
       Py_buffer buffer;
       if (PyObject_GetBuffer(arg, &buffer, PyBUF_SIMPLE | PyBUF_C_CONTIGUOUS) == -1) {
@@ -227,6 +228,19 @@ struct PickleModule {
 
       return PyLong_FromSize_t(n);
     }
+
+    File(PickleModule& module) {
+      memset(&ob_base, 0, sizeof(ob_base));
+      o = PyObject_Init((PyObject*)this, &module.fileType);
+      if (o != (PyObject*)this) {
+        throw SerializationError("PyObject_Init failed");
+      }
+    }
+    ~File() noexcept(false) {
+      if (o->ob_refcnt != 1) {
+        throw SerializationError(fmt::sprintf("Pickle File object refcount != 1 (it is %d)", o->ob_refcnt));
+      }
+    }
   };
 
   PyModuleDef moduleDef = {
@@ -241,7 +255,6 @@ struct PickleModule {
   PyTypeObject fileType = {PyVarObject_HEAD_INIT(nullptr, 0)};
 
   py::object module;
-  File file;
   py::function dump;
   py::function load;
   py::object highestProtocol;
@@ -272,12 +285,6 @@ struct PickleModule {
       throw SerializationError("PyModule_Create failed");
     }
     Py_INCREF(&fileType);
-    memset(&file, 0, sizeof(file));
-    PyObject* o = PyObject_Init((PyObject*)&file, &fileType);
-    if (o != (PyObject*)&file) {
-      throw SerializationError("PyObject_Init failed");
-    }
-    Py_INCREF(o);
 
     auto pickle = py::module::import("pickle");
     highestProtocol = pickle.attr("HIGHEST_PROTOCOL");
@@ -294,15 +301,17 @@ struct PickleModule {
 template<typename X>
 void picklex(X& x, const py::handle& v) {
   auto& module = PickleModule<X, true>::get();
-  module.file.x = &x;
-  module.dump(v, py::handle((PyObject*)&module.file), module.highestProtocol);
+  typename PickleModule<X, true>::File file(module);
+  file.x = &x;
+  module.dump(v, py::handle(file.o), module.highestProtocol);
 }
 
 template<typename X>
 py::object unpickle(X& x) {
   auto& module = PickleModule<X, false>::get();
-  module.file.x = &x;
-  return module.load(py::handle((PyObject*)&module.file));
+  typename PickleModule<X, false>::File file(module);
+  file.x = &x;
+  return module.load(py::handle(file.o));
 }
 
 pybind11::object toPython(const Tensor&);
