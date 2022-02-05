@@ -1,5 +1,7 @@
 # moolib
 
+<span style="font-size:10em">🐮</span>
+
 <p align="center">
 <a href="https://github.com/facebookresearch/moolib/actions/workflows/run_python_tests.yml">
   <img src="https://github.com/facebookresearch/moolib/actions/workflows/run_python_tests.yml/badge.svg?branch=main" />
