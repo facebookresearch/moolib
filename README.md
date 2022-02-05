@@ -1,6 +1,4 @@
-# moolib
-
-<span style="font-size:10em">🐮</span>
+# &#x1F42E; <br /> moolib
 
 <p align="center">
 <a href="https://github.com/facebookresearch/moolib/actions/workflows/run_python_tests.yml">
