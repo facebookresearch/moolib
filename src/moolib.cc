@@ -1452,6 +1452,11 @@ PYBIND11_MODULE(_C, m) {
                  rpc::moolibModule = nullptr;
                }));
 
+  // numpy forks during import, and pybind can trigger a numpy import
+  // during serialization (just for checking if the input is a numpy array).
+  // forks generally break moolib, so do it here where it's safe
+  py::detail::npy_api::get();
+
   // pybind signatures don't play well with Sphinx
   py::options options;
   options.disable_function_signatures();
