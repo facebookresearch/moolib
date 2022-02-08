@@ -104,6 +104,7 @@ struct NullOps {
 template<typename T>
 struct FreeList {
   T* ptr = nullptr;
+  size_t size = 0;
   bool dead = false;
   ~FreeList() {
     dead = true;
@@ -121,6 +122,14 @@ struct FreeList {
   }
 };
 
+struct alignas(64) GlobalFreeList {
+  std::atomic<Storage*> ptr = nullptr;
+  std::atomic_int refCount = 0;
+};
+
+inline GlobalFreeList globalFreeList;
+static inline constexpr size_t maxThreadLocalSize = 1024 * 16;
+
 inline Storage* allocStorage(size_t n) {
   void* ptr = std::malloc(sizeof(Storage) + n);
   if (!ptr) {
@@ -135,8 +144,23 @@ inline Storage* allocStorage(size_t n) {
 inline Storage* newStorage(size_t n) {
   auto& fl = FreeList<Storage>::get();
   if (!fl.ptr) {
+    ++globalFreeList.refCount;
+    Storage* ptr = globalFreeList.ptr.load(std::memory_order_relaxed);
+    while (true) {
+      if (!ptr) {
+        break;
+      }
+      if (globalFreeList.ptr.compare_exchange_weak(ptr, ptr->next)) {
+        --globalFreeList.refCount;
+        while (globalFreeList.refCount.load(std::memory_order_relaxed))
+          ;
+        return ptr;
+      }
+    }
+    --globalFreeList.refCount;
     return allocStorage(n);
   }
+  fl.size -= fl.ptr->allocated_;
   return std::exchange(fl.ptr, fl.ptr->next);
 }
 
@@ -146,6 +170,24 @@ inline void freeStorage(Storage* s) {
     std::free(s);
     return;
   }
+  if (fl.size >= maxThreadLocalSize) {
+    Storage* end = fl.ptr;
+    fl.size -= end->allocated_;
+    for (int i = 0; i != 16 && end->next && fl.size >= maxThreadLocalSize / 2; ++i) {
+      end = end->next;
+      fl.size -= end->allocated_;
+    }
+    Storage* begin = fl.ptr;
+    fl.ptr = end->next;
+    Storage* gptr = globalFreeList.ptr.load(std::memory_order_relaxed);
+    while (true) {
+      end->next = gptr;
+      if (globalFreeList.ptr.compare_exchange_weak(gptr, begin)) {
+        break;
+      }
+    }
+  }
+  fl.size += s->allocated_;
   s->next = fl.ptr;
   fl.ptr = s;
 }
@@ -186,8 +228,10 @@ public:
   }
   Function(std::nullptr_t) noexcept {}
   Function(FunctionPointer ptr) noexcept {
-    storage_ = ptr;
-    ops_ = (const impl::Ops<R, Args...>*)ptr->ops_;
+    if (ptr) {
+      storage_ = ptr;
+      ops_ = (const impl::Ops<R, Args...>*)ptr->ops_;
+    }
   }
 
   template<typename F>
@@ -208,8 +252,11 @@ public:
 
   Function& operator=(FunctionPointer ptr) noexcept {
     *this = nullptr;
-    storage_ = ptr;
-    ops_ = (const impl::Ops<R, Args...>*)ptr->ops_;
+    if (ptr) {
+      storage_ = ptr;
+      ops_ = (const impl::Ops<R, Args...>*)ptr->ops_;
+    }
+    return *this;
   }
 
   R operator()(Args... args) const& {
