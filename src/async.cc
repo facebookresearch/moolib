@@ -270,7 +270,7 @@ struct SchedulerFifoImpl {
       }
       auto& i = incoming[searchOffset];
       auto& o = outgoing[searchOffset];
-      size_t ack = o.ack.load(std::memory_order_relaxed);;
+      size_t ack = o.ack.load(std::memory_order_relaxed);
       size_t occupancy = i.req.load(std::memory_order_relaxed) - ack;
       if (occupancy < bestOccupancy) {
         bestOccupancy = occupancy;
@@ -285,7 +285,7 @@ struct SchedulerFifoImpl {
       auto& i = incoming[bestIndex];
       auto& o = outgoing[bestIndex];
       std::lock_guard l(i.mutex);
-      size_t ack = o.ack.load(std::memory_order_relaxed);;
+      size_t ack = o.ack.load(std::memory_order_relaxed);
       size_t req = i.req.load(std::memory_order_relaxed);
       if (req - ack < i.p.size()) {
         i.p[req % i.p.size()] = f.release();
