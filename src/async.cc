@@ -8,6 +8,8 @@
 #include "async.h"
 #include "synchronization.h"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <list>
 #include <mutex>
@@ -32,13 +34,17 @@ template<typename T>
 using Function = rpc::Function<T>;
 using FunctionPointer = rpc::FunctionPointer;
 
+thread_local bool isThisAThread = false;
+
 struct Thread {
   alignas(64) rpc::Semaphore sem;
-  FunctionPointer f;
+  FunctionPointer f = nullptr;
   std::thread thread;
   int n = 0;
+  std::atomic_bool terminate = false;
   template<typename WaitFunction>
   void entry(WaitFunction&& waitFunction) noexcept {
+    isThisAThread = true;
     while (f) {
       try {
         Function<void()>{f}();
@@ -69,22 +75,23 @@ struct ThreadPool {
     if (sched_getaffinity(0, sizeof(set), &set) == 0) {
       int n = CPU_COUNT(&set);
       if (n > 0) {
-        maxThreads = n;
+        maxThreads = std::max(n - 1, 1);
       }
     }
 #endif
+    maxThreads = std::min(maxThreads, (size_t)64);
   }
-  ThreadPool(size_t maxThreads) : maxThreads(maxThreads) {}
+  ThreadPool(size_t maxThreads) : maxThreads(std::min(maxThreads, (size_t)64)) {}
   ~ThreadPool() {
     for (auto& v : threads) {
       v.thread.join();
     }
   }
   template<typename WaitFunction>
-  bool addThread(Function<void()>& f, WaitFunction&& waitFunction) noexcept {
+  Thread* addThread(Function<void()>& f, WaitFunction&& waitFunction) noexcept {
     std::unique_lock l(mutex);
     if (numThreads >= maxThreads) {
-      return false;
+      return nullptr;
     }
     stopForksFromHereOn();
     int n = ++numThreads;
@@ -101,7 +108,7 @@ struct ThreadPool {
       t->entry(std::move(waitFunction));
     });
     sem.wait();
-    return true;
+    return t;
   }
   void setMaxThreads(size_t n) {
     std::unique_lock l(mutex);
@@ -110,11 +117,25 @@ struct ThreadPool {
 };
 
 struct SchedulerFifoImpl {
-  rpc::SpinMutex mutex;
-  bool terminate = false;
-  std::vector<Thread*> idle;
-  FunctionPointer queueBegin = nullptr;
-  FunctionPointer queueEnd = nullptr;
+  std::array<std::atomic<Thread*>, 64> threads{};
+  std::atomic_size_t nextThreadIndex = 0;
+
+  struct alignas(64) Incoming {
+    rpc::SpinMutex mutex;
+    std::atomic_size_t req = 0;
+    std::array<FunctionPointer, 8> p{};
+  };
+  struct alignas(64) Outgoing {
+    std::atomic<rpc::Semaphore*> sleeping = nullptr;
+    std::atomic_size_t ack = 0;
+  };
+  std::array<Incoming, 64> incoming;
+  std::array<Outgoing, 64> outgoing;
+
+  std::atomic_size_t globalQueueSize = 0;
+  rpc::SpinMutex globalMutex;
+  size_t globalQueueOffset = 0;
+  std::vector<rpc::Function<void()>> globalQueue;
 
   ThreadPool pool;
 
@@ -122,62 +143,162 @@ struct SchedulerFifoImpl {
   SchedulerFifoImpl(size_t nThreads) : pool(nThreads) {}
 
   ~SchedulerFifoImpl() {
-    std::unique_lock l(mutex);
-    terminate = true;
-    for (auto& v : idle) {
-      v->f = nullptr;
-      v->sem.post();
-    }
-    idle.clear();
-    for (auto i = queueBegin; i != queueEnd;) {
-      auto x = i;
-      i = i->next;
-      (Function<void()>)(x);
+    for (auto& v : threads) {
+      Thread* t = v.load();
+      if (t) {
+        t->terminate = true;
+      }
     }
   }
 
   void wait(Thread* t) noexcept {
-    std::unique_lock l(mutex);
-    if (terminate) {
-      return;
-    }
-    if (queueBegin) {
-      t->f = queueBegin;
-      if (queueEnd == queueBegin) {
-        queueBegin = queueEnd = nullptr;
-      } else {
-        queueBegin = queueBegin->next;
+    size_t index = t->n;
+    auto& i = incoming[index];
+    auto& o = outgoing[index];
+    size_t ack = o.ack.load(std::memory_order_relaxed);
+    size_t spinCount = 0;
+    bool sleeping = false;
+    while (i.req.load(std::memory_order_acquire) == ack) {
+      _mm_pause();
+      if (++spinCount >= 1 << 12) {
+        if (t->terminate.load(std::memory_order_relaxed)) {
+          return;
+        }
+        std::this_thread::yield();
+        if (i.req.load(std::memory_order_acquire) != ack) {
+          break;
+        }
+        if (spinCount >= (1 << 12) + 256) {
+          int ms = sleeping ? 5 : 0;
+          sleeping = true;
+          o.sleeping.store(&t->sem, std::memory_order_relaxed);
+          t->sem.wait_for(std::chrono::milliseconds(ms));
+        }
       }
-    } else {
-      idle.push_back(t);
-      l.unlock();
-      t->sem.wait();
-    }
-  }
 
-  void run(Function<void()> f) noexcept {
-    std::unique_lock l(mutex);
-    if (idle.empty()) {
-      if (pool.numThreads.load(std::memory_order_relaxed) < pool.maxThreads) {
-        if (pool.addThread(f, [this](Thread* t) { wait(t); })) {
+      if (globalQueueSize.load(std::memory_order_relaxed) != 0) {
+        std::lock_guard l(globalMutex);
+        if (globalQueueOffset != globalQueue.size()) {
+          t->f = globalQueue[globalQueueOffset].release();
+          ++globalQueueOffset;
+          globalQueueSize.fetch_sub(1, std::memory_order_relaxed);
+          if (globalQueueOffset >= 0x100) {
+            globalQueue.erase(globalQueue.begin(), globalQueue.begin() + globalQueueOffset);
+            globalQueueOffset = 0;
+          }
           return;
         }
       }
-      FunctionPointer p = f.release();
-      p->next = nullptr;
-      if (queueEnd) {
-        queueEnd->next = p;
-        queueEnd = p;
-      } else {
-        queueBegin = queueEnd = p;
-      }
-    } else {
-      Thread* t = idle.back();
-      idle.pop_back();
-      l.unlock();
-      t->f = f.release();
-      t->sem.post();
     }
+    o.sleeping.store(nullptr, std::memory_order_relaxed);
+    t->f = i.p[ack % i.p.size()];
+    ++o.ack;
+  }
+
+  void scheduleGlobally(Function<void()> f) {
+    std::lock_guard l(globalMutex);
+    globalQueueSize.fetch_add(1, std::memory_order_relaxed);
+    globalQueue.push_back(std::move(f));
+  }
+
+  void run(Function<void()> f) noexcept {
+    thread_local size_t tlsSearchOffset = 0;
+    thread_local bool searchDirection = false;
+    bool searchDir = searchDirection ^= true;
+    size_t searchOffset = tlsSearchOffset;
+
+    size_t nThreads = nextThreadIndex.load(std::memory_order_acquire);
+    for (size_t n = 0; n != nThreads; ++n) {
+      if (searchDir) {
+        if (searchOffset == 0) {
+          searchOffset = nThreads - 1;
+        } else {
+          --searchOffset;
+        }
+      } else {
+        if (searchOffset == nThreads - 1) {
+          searchOffset = 0;
+        } else {
+          ++searchOffset;
+        }
+      }
+      auto& i = incoming[searchOffset];
+      auto& o = outgoing[searchOffset];
+      size_t ack = o.ack.load(std::memory_order_relaxed);
+      if (i.req.load(std::memory_order_relaxed) == ack) {
+        std::lock_guard l(i.mutex);
+        size_t req = i.req.load(std::memory_order_relaxed);
+        if (req == ack) {
+          i.p[req % i.p.size()] = f.release();
+          ++req;
+          i.req.store(req);
+          auto* sleeping = o.sleeping.load(std::memory_order_relaxed);
+          if (sleeping) {
+            sleeping->post();
+          }
+          return;
+        }
+      }
+    }
+
+    if (pool.numThreads.load(std::memory_order_relaxed) < pool.maxThreads) {
+      if (Thread* t = pool.addThread(f, [this](Thread* t) { wait(t); })) {
+        size_t index = nextThreadIndex++;
+        if (index < threads.size()) {
+          threads[index] = t;
+        }
+        return;
+      }
+    }
+
+    nThreads = nextThreadIndex.load(std::memory_order_acquire);
+    size_t bestIndex = -1;
+    size_t bestOccupancy = 100;
+    for (size_t n = 0; n != nThreads; ++n) {
+      if (searchDir) {
+        if (searchOffset == 0) {
+          searchOffset = nThreads - 1;
+        } else {
+          --searchOffset;
+        }
+      } else {
+        if (searchOffset == nThreads - 1) {
+          searchOffset = 0;
+        } else {
+          ++searchOffset;
+        }
+      }
+      auto& i = incoming[searchOffset];
+      auto& o = outgoing[searchOffset];
+      size_t ack = o.ack.load(std::memory_order_relaxed);
+      size_t occupancy = i.req.load(std::memory_order_relaxed) - ack;
+      if (occupancy < bestOccupancy) {
+        bestOccupancy = occupancy;
+        bestIndex = searchOffset;
+        if (occupancy == 1) {
+          break;
+        }
+      }
+    }
+
+    if (bestIndex != (size_t)-1) {
+      auto& i = incoming[bestIndex];
+      auto& o = outgoing[bestIndex];
+      std::lock_guard l(i.mutex);
+      size_t ack = o.ack.load(std::memory_order_relaxed);
+      size_t req = i.req.load(std::memory_order_relaxed);
+      if (req - ack < i.p.size()) {
+        i.p[req % i.p.size()] = f.release();
+        ++req;
+        i.req.store(req);
+        auto* sleeping = o.sleeping.load(std::memory_order_relaxed);
+        if (sleeping) {
+          sleeping->post();
+        }
+        return;
+      }
+    }
+    scheduleGlobally(std::move(f));
   }
 };
 
@@ -193,6 +314,10 @@ void SchedulerFifo::run(Function<void()> f) noexcept {
 }
 void SchedulerFifo::setMaxThreads(size_t nThreads) {
   impl_->pool.setMaxThreads(nThreads);
+}
+
+bool SchedulerFifo::isInThread() const noexcept {
+  return isThisAThread;
 }
 
 std::atomic_bool atForkHandlerInstalled = false;
