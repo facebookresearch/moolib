@@ -127,7 +127,7 @@ struct SchedulerFifoImpl {
   };
   struct alignas(64) Outgoing {
     std::atomic<rpc::Semaphore*> sleeping = nullptr;
-    size_t ack = 0;
+    std::atomic_size_t ack = 0;
   };
   std::array<Incoming, 64> incoming;
   std::array<Outgoing, 64> outgoing;
@@ -151,13 +151,11 @@ struct SchedulerFifoImpl {
     }
   }
 
-  std::atomic_int numIdleThreads = 0;
-
   void wait(Thread* t) noexcept {
     size_t index = t->n;
     auto& i = incoming[index];
     auto& o = outgoing[index];
-    size_t ack = o.ack;
+    size_t ack = o.ack.load(std::memory_order_relaxed);
     size_t spinCount = 0;
     bool sleeping = false;
     while (i.req.load(std::memory_order_acquire) == ack) {
@@ -226,14 +224,14 @@ struct SchedulerFifoImpl {
       }
       auto& i = incoming[searchOffset];
       auto& o = outgoing[searchOffset];
-      size_t ack = o.ack;
+      size_t ack = o.ack.load(std::memory_order_relaxed);
       if (i.req.load(std::memory_order_relaxed) == ack) {
         std::lock_guard l(i.mutex);
         size_t req = i.req.load(std::memory_order_relaxed);
         if (req == ack) {
           i.p[req % i.p.size()] = f.release();
           ++req;
-          i.req.store(req, std::memory_order_relaxed);
+          i.req.store(req);
           auto* sleeping = o.sleeping.load(std::memory_order_relaxed);
           if (sleeping) {
             sleeping->post();
@@ -272,7 +270,7 @@ struct SchedulerFifoImpl {
       }
       auto& i = incoming[searchOffset];
       auto& o = outgoing[searchOffset];
-      size_t ack = o.ack;
+      size_t ack = o.ack.load(std::memory_order_relaxed);;
       size_t occupancy = i.req.load(std::memory_order_relaxed) - ack;
       if (occupancy < bestOccupancy) {
         bestOccupancy = occupancy;
@@ -287,12 +285,12 @@ struct SchedulerFifoImpl {
       auto& i = incoming[bestIndex];
       auto& o = outgoing[bestIndex];
       std::lock_guard l(i.mutex);
-      size_t ack = o.ack;
+      size_t ack = o.ack.load(std::memory_order_relaxed);;
       size_t req = i.req.load(std::memory_order_relaxed);
       if (req - ack < i.p.size()) {
         i.p[req % i.p.size()] = f.release();
         ++req;
-        i.req.store(req, std::memory_order_relaxed);
+        i.req.store(req);
         auto* sleeping = o.sleeping.load(std::memory_order_relaxed);
         if (sleeping) {
           sleeping->post();
