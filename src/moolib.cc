@@ -1393,8 +1393,13 @@ struct BatcherWrapper {
   }
 
   bool empty() {
-    std::unique_lock l(mutex);
+    std::lock_guard l(mutex);
     return queue.empty();
+  }
+
+  size_t size() {
+    std::lock_guard l(mutex);
+    return queue.size();
   }
 
   py::object get() {
@@ -1422,6 +1427,14 @@ struct BatcherWrapper {
     batcher.cat(std::move(data), [this](py::object value) { enqueue(value); });
   }
 };
+
+void callRpcDeferredReturn(rpc::RpcDeferredReturn<GilWrapper<py::object>>& o, const py::object& v) {
+  o(v);
+}
+
+void callFunction(rpc::Function<void(GilWrapper<py::object>)>& o, const py::object& v) {
+  o(v);
+}
 
 void set_log_level(py::object level) {
   if (py::isinstance<py::str>(level)) {
@@ -1719,6 +1732,7 @@ PYBIND11_MODULE(_C, m) {
       )d"))
       .def("model_version", &Accumulator::modelVersion, py::doc(R"d(
         Return the current model version.
+
         This number is automatically incremented when ``zero_gradients`` is called.
         The peer with the highest model version will be selected as the leader.
 
@@ -1728,15 +1742,21 @@ PYBIND11_MODULE(_C, m) {
       .def("set_model_version", &Accumulator::setModelVersion, py::arg("n"), py::doc(R"d(
          Set the current model version.
 
-         The default value is:
+         This function should be called e.g. when a model is loaded from a checkpoint,
+         to inform Moolib of the real model version. In this case, it's best to do it before
+         calling ``Accumulator.update`` for the first time.
+
+         Calling this function will *not* trigger any synchronization, in particular the leader
+         will not change immediately, but may change later based on the set value if synchronization
+         occurs (e.g. when a peer joins or leaves).
 
          Args:
-             n (int): the virtual batch size.
+             n (int): the new model version.
        )d"))
       .def("set_virtual_batch_size", &Accumulator::setVirtualBatchSize, py::arg("n"), py::doc(R"d(
         Set the virtual batch size of the reduction operation.
 
-        The default value is:
+        The default value is: 1
 
         Args:
             n (int): the virtual batch size.
@@ -1744,7 +1764,12 @@ PYBIND11_MODULE(_C, m) {
       .def("set_parallel_gradients", &Accumulator::setParallelGradients, py::arg("n"), py::doc(R"d(
         Set the number of parallel gradient reduction operations.
 
-        The default value is:
+        If this value is set to >1, multiple sets of gradients may be accumulated simultaneously.
+        In this case, gradients may have been calculated using a previous model version (up to `n` versions ago).
+        This can allow using smaller virtual batch sizes, when many peers generate data quickly.
+        Gradients will always be applied (through ``has_gradients``) in the same order on all peers.
+
+        The default value is: 1
 
         Args:
             n (int): the number of parallel gradient operations.
@@ -1770,7 +1795,7 @@ PYBIND11_MODULE(_C, m) {
             (dict): statistics about the gradient syncing.
       )d"));
   py::class_<BatcherWrapper>(m, "Batcher", R"d(
-    A auxiliary class to asynchronously batch tensors into an chosen batch size on a certain device.
+    An auxiliary class to asynchronously batch tensors into an chosen batch size on a certain device.
 
     This class will often be used in an RL setting, see ``examples/impala/impala.py``, with batching
     happening in a background thread. This class is ``awaitable`` with asyncio.
@@ -1821,6 +1846,12 @@ PYBIND11_MODULE(_C, m) {
         Returns:
             bool:
       )d"))
+      .def("size", &BatcherWrapper::size, py::doc(R"d(
+        Returns the size of the batched queue of data.
+
+        Returns:
+            int:
+      )d"))
       .def("get", &BatcherWrapper::get, py::doc(R"d(
         Return a batched tensor.
 
@@ -1833,7 +1864,10 @@ PYBIND11_MODULE(_C, m) {
   py::class_<rpc::RpcDeferredReturn<GilWrapper<py::object>>>(m, "RpcDeferredReturn", R"d(
     A deferred return from call to a ``define_deferred`` function.
   )d")
-      .def("__call__", &rpc::RpcDeferredReturn<GilWrapper<py::object>>::operator()<const py::object&>);
+      .def("__call__", &callRpcDeferredReturn);
+  py::class_<rpc::Function<void(GilWrapper<py::object>)>>(m, "Function", R"d(
+  )d")
+      .def("__call__", &callFunction);
   py::class_<QueueWrapper, std::shared_ptr<QueueWrapper>>(m, "Queue", R"d(
     A tensorpipe Queue class.
   )d")
@@ -1942,6 +1976,14 @@ PYBIND11_MODULE(_C, m) {
             function (Callable[[], None]): a Python function, for peers to call.
             kwargs: specifications for how to treat Tensor arguments to the function.
       )d"))
+      .def("undefine", &RpcWrapper::undefine, py::arg("name"), py::doc(R"(
+        Undefine a previously defined function.
+
+        This function will block until all current calls to the function have completed.
+
+        Args:
+            name (str): a name corresponding to a previous call to ``define``.
+      )"))
       .def("define_deferred", &RpcWrapper::defineDeferred, py::doc(R"d(
         Define a deferred function to be available for peers to call.
 
@@ -2065,6 +2107,8 @@ PYBIND11_MODULE(_C, m) {
       .def("cancel", &FutureWrapper::cancel, py::doc(R"d(Cancel the future calculation.)d"))
       .def("done", &FutureWrapper::done, py::doc(R"d(Check if the future has finished.)d"))
       .def("exception", &FutureWrapper::exception, py::doc("Returns the exception that occurred, if any."))
+      .def("wait", (void (FutureWrapper::*)()) & FutureWrapper::wait)
+      .def("wait", (void (FutureWrapper::*)(float)) & FutureWrapper::wait)
       .def("__await__", &FutureWrapper::await)
       .def("__iter__", &FutureWrapper::await);
   py::class_<Broker>(m, "Broker", R"d(
@@ -2168,6 +2212,8 @@ PYBIND11_MODULE(_C, m) {
       .def("cancel", &AllReduceWrapper::cancel, py::doc(R"d(Cancel the future calculation.)d"))
       .def("done", &AllReduceWrapper::done, py::doc(R"d(Check if the future has finished.)d"))
       .def("exception", &AllReduceWrapper::exception, py::doc("Returns the exception that occurred, if any."))
+      .def("wait", (void (AllReduceWrapper::*)()) & AllReduceWrapper::wait)
+      .def("wait", (void (AllReduceWrapper::*)(float)) & AllReduceWrapper::wait)
       .def("__await__", &AllReduceWrapper::await)
       .def("__iter__", &AllReduceWrapper::await);
 }
