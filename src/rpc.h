@@ -79,18 +79,63 @@ auto makeMe(T* v) {
   return Me<T>(v);
 }
 
+struct TensorContext {
+  std::optional<rpc::CUDAStream> stream;
+  void synchronize() {
+#ifdef USE_CUDA
+    if (stream) {
+      stream->synchronize();
+    }
+#endif
+  }
+};
+
+enum ReqType : uint32_t {
+  reqGreeting,
+  reqError,
+  reqSuccess,
+  reqAck,
+  reqNack,
+  reqFunctionNotFound,
+  reqPoke,
+  reqLookingForPeer,
+  reqPeerFound,
+  reqClose,
+
+  reqCallOffset = 1000,
+};
+
 template<typename T>
 struct RpcDeferredReturn {
-  rpc::Function<std::conditional_t<std::is_same_v<void, T>, void(), void(const T&)>> f;
-  template<typename U>
-  void operator()(U&& u) {
-    f(std::forward<U>(u));
+  Function<void(BufferHandle)> f;
+  template<typename U = T, std::enable_if_t<std::is_same_v<U, void>>* = nullptr>
+  void operator()() const {
+    f(serializeToBuffer((uint32_t)0, (uint32_t)reqSuccess));
+  }
+  template<typename U = T, std::enable_if_t<!std::is_same_v<U, void>>* = nullptr>
+  void operator()(const U& v) {
+    f(serializeToBuffer((uint32_t)0, (uint32_t)reqSuccess, v));
+  }
+  void operator()(BufferHandle buffer) {
+    f(std::move(buffer));
+  }
+  explicit operator bool() const noexcept {
+    return f != nullptr;
+  }
+
+  template<typename U = T, std::enable_if_t<std::is_same_v<U, void>>* = nullptr>
+  BufferHandle serializeReturnValue() {
+    return serializeToBuffer((uint32_t)0, (uint32_t)reqSuccess);
+  }
+  template<typename U = T, std::enable_if_t<!std::is_same_v<U, void>>* = nullptr>
+  BufferHandle serializeReturnValue(const U& v) {
+    return serializeToBuffer((uint32_t)0, (uint32_t)reqSuccess, v);
   }
 };
 
 struct Rpc {
 
-  using ResponseCallback = Function<void(BufferHandle buffer, Error*)>;
+  using ResponseCallback = Function<void(BufferHandle buffer, TensorContext&, Error*)>;
 
   Rpc();
   ~Rpc();
@@ -98,12 +143,14 @@ struct Rpc {
 
   struct Service {
     std::string name;
-    void* pointer = nullptr;
+    SpinMutex initMutex;
+    std::atomic<void*> pointer = nullptr;
     Function<void()> dtor = nullptr;
+    Function<void()> close = nullptr;
     Service(std::string_view name) : name(name) {}
     Service() = default;
     Service(Service&& n) {
-      pointer = std::exchange(n.pointer, nullptr);
+      pointer = n.pointer.exchange(nullptr);
       dtor = std::move(n.dtor);
     }
     Service(const Service&) = delete;
@@ -115,24 +162,32 @@ struct Rpc {
     }
     template<typename T, typename... Args>
     T& emplace(Args&&... args) {
-      if (!pointer) {
-        pointer = new T(std::forward<Args>(args)...);
-        dtor = [pointer = pointer]() { delete (T*)pointer; };
+      if (!pointer.load(std::memory_order_relaxed)) {
+        std::lock_guard l(initMutex);
+        if (!pointer) {
+          auto* p = new T(std::forward<Args>(args)...);
+          dtor = [p]() mutable { delete p; };
+          close = [p]() mutable { p->close(); };
+          pointer = p;
+        }
       }
       return as<T>();
     }
     template<typename T>
     T& as() {
-      return *(T*)pointer;
+      return *(T*)pointer.load(std::memory_order_relaxed);
     }
     operator std::string_view() const {
       return name;
     }
   };
 
-  template<typename T>
-  T* getService(std::string_view name) {
-    return &const_cast<Service&>(*services[typeid(T)].emplace(name).first).emplace<T>(*this);
+  template<typename T, typename... Args>
+  T* getService(std::string_view name, Args&&... args) {
+    std::unique_lock l(servicesMutex);
+    auto& s = const_cast<Service&>(*services[typeid(T)].emplace(name).first);
+    l.unlock();
+    return &s.emplace<T>(*this, std::forward<Args>(args)...);
   }
 
   void setName(std::string_view name);
@@ -149,26 +204,11 @@ struct Rpc {
 
   struct FBase {
     virtual ~FBase(){};
-    virtual void call(BufferHandle, Function<void(BufferHandle)>) = 0;
+    virtual void call(BufferHandle, TensorContext&, Function<void(BufferHandle)>) = 0;
   };
 
   template<typename Signature, typename F>
   struct FImpl;
-
-  enum ReqType : uint32_t {
-    reqGreeting,
-    reqError,
-    reqSuccess,
-    reqAck,
-    reqNack,
-    reqFunctionNotFound,
-    reqPoke,
-    reqLookingForPeer,
-    reqPeerFound,
-    reqClose,
-
-    reqCallOffset = 1000,
-  };
 
   template<typename R, typename... Args, typename F>
   struct FImpl<R(Args...), F> : FBase {
@@ -177,76 +217,86 @@ struct Rpc {
     template<typename F2>
     FImpl(Rpc& rpc, F2&& f) : rpc(rpc), f(std::forward<F2>(f)) {}
     virtual ~FImpl() {}
-    virtual void call(BufferHandle inbuffer, Function<void(BufferHandle)> callback) noexcept override {
-      scheduler.run([rpc = makeMe(&rpc), this, inbuffer = std::move(inbuffer),
-                     callback = std::move(callback)]() mutable noexcept {
-        try {
-          std::tuple<std::decay_t<Args>...> args;
-          constexpr bool isDeferred = std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, Args...>;
-          auto in = [&]() {
-            uint32_t rid, fid;
-            std::apply(
-                [&](std::decay_t<Args>&... args) { deserializeBuffer(std::move(inbuffer), rid, fid, args...); }, args);
-          };
-          BufferHandle outbuffer;
-          auto out = [this, &args, &outbuffer]() {
-            if constexpr (!isDeferred) {
-              if constexpr (std::is_same_v<void, R>) {
-                std::apply(f, std::move(args));
-                serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqSuccess);
+    virtual void
+    call(BufferHandle inbuffer, TensorContext& tensorContext, Function<void(BufferHandle)> callback) noexcept override {
+      try {
+        std::tuple<std::decay_t<Args>...> args;
+        constexpr bool takesStream =
+            std::is_invocable_r_v<R, F, std::optional<CUDAStream>, Args...> ||
+            std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, std::optional<CUDAStream>, Args...>;
+        constexpr bool isDeferred =
+            std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, Args...> ||
+            std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, std::optional<CUDAStream>, Args...>;
+        auto in = [&]() {
+          uint32_t rid, fid;
+          std::apply(
+              [&](std::decay_t<Args>&... args) { deserializeBuffer(std::move(inbuffer), rid, fid, args...); }, args);
+        };
+        BufferHandle outbuffer;
+        auto out = [this, &args, &outbuffer, &tensorContext]() {
+          if constexpr (!isDeferred) {
+            auto wrap = [&](auto&&... args) {
+              if constexpr (takesStream) {
+                return f(tensorContext.stream, std::forward<decltype(args)>(args)...);
               } else {
-                serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqSuccess, std::apply(f, std::move(args)));
+                if (tensorContext.stream) {
+                  tensorContext.stream->synchronize();
+                }
+                return f(std::forward<decltype(args)>(args)...);
               }
+            };
+            if constexpr (std::is_same_v<void, R>) {
+              std::apply(wrap, std::move(args));
+              serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqSuccess);
+            } else {
+              serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqSuccess, std::apply(wrap, std::move(args)));
             }
-          };
-          auto exceptionMode = rpc->currentExceptionMode_.load(std::memory_order_relaxed);
-          if (exceptionMode == ExceptionMode::None) {
+          }
+        };
+        auto exceptionMode = rpc.currentExceptionMode_.load(std::memory_order_relaxed);
+        if (exceptionMode == ExceptionMode::None) {
+          in();
+          out();
+        } else if (exceptionMode == ExceptionMode::DeserializationOnly) {
+          try {
+            in();
+          } catch (const std::exception& e) {
+            serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqError, std::string_view(e.what()));
+            std::move(callback)(std::move(outbuffer));
+            return;
+          }
+          out();
+        } else {
+          try {
             in();
             out();
-          } else if (exceptionMode == ExceptionMode::DeserializationOnly) {
-            try {
-              in();
-            } catch (const std::exception& e) {
-              serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqError, std::string_view(e.what()));
-              std::move(callback)(std::move(outbuffer));
-              return;
-            }
-            out();
-          } else {
-            try {
-              in();
-              out();
-            } catch (const std::exception& e) {
-              serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqError, std::string_view(e.what()));
-              std::move(callback)(std::move(outbuffer));
-              return;
-            }
-          }
-          if constexpr (isDeferred) {
-            RpcDeferredReturn<R> d;
-            if constexpr (std::is_same_v<void, R>) {
-              d.f = [callback = std::move(callback)]() mutable noexcept {
-                BufferHandle outbuffer;
-                serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqSuccess);
-                std::move(callback)(std::move(outbuffer));
-              };
-            } else {
-              d.f = [callback = std::move(callback)](const R& r) mutable noexcept {
-                BufferHandle outbuffer;
-                serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqSuccess, r);
-                std::move(callback)(std::move(outbuffer));
-              };
-            }
-            auto wrap = [&](auto&&... args) { f(std::move(d), std::forward<decltype(args)>(args)...); };
-            std::apply(wrap, std::move(args));
-          } else {
+          } catch (const std::exception& e) {
+            serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqError, std::string_view(e.what()));
             std::move(callback)(std::move(outbuffer));
+            return;
           }
-        } catch (const std::exception& e) {
-          fprintf(stderr, "Unhandled exception in RPC function: %s\n", e.what());
-          std::abort();
         }
-      });
+        if constexpr (isDeferred) {
+          RpcDeferredReturn<R> d;
+          d.f = std::move(callback);
+          auto wrap = [&](auto&&... args) {
+            if constexpr (takesStream) {
+              f(std::move(d), tensorContext.stream, std::forward<decltype(args)>(args)...);
+            } else {
+              if (tensorContext.stream) {
+                tensorContext.stream->synchronize();
+              }
+              f(std::move(d), std::forward<decltype(args)>(args)...);
+            }
+          };
+          std::apply(wrap, std::move(args));
+        } else {
+          std::move(callback)(std::move(outbuffer));
+        }
+      } catch (const std::exception& e) {
+        fprintf(stderr, "Unhandled exception in RPC function: %s\n", e.what());
+        std::abort();
+      }
     }
   };
 
@@ -255,6 +305,7 @@ struct Rpc {
     auto ff = std::make_unique<FImpl<Signature, F>>(*this, std::forward<F>(f));
     define(name, std::move(ff));
   }
+  void undefine(std::string_view name);
 
   template<typename... Args>
   BufferHandle serializeArguments(const Args&... args) {
@@ -279,22 +330,40 @@ struct Rpc {
 
     sendRequest(
         peerName, functionName, std::move(buffer),
-        [this, callback = std::forward<Callback>(callback)](BufferHandle buffer, Error* error) mutable noexcept {
-          constexpr bool takesReturnValue = std::is_invocable_v<Callback, R*, Error*>;
+        [this, callback = std::forward<Callback>(callback)](
+            BufferHandle buffer, TensorContext& tensorContext, Error* error) mutable noexcept {
+          constexpr bool takesStream = std::is_invocable_v<Callback, std::optional<rpc::CUDAStream>, R*, Error*>;
+          constexpr bool takesReturnValue = takesStream || std::is_invocable_v<Callback, R*, Error*>;
           constexpr bool takesError = std::is_invocable_v<Callback, Error*>;
           static_assert(
               takesReturnValue || takesError || std::is_same_v<std::decay_t<Callback>, std::nullptr_t>,
               "Callback function has invalid signature");
+          static constexpr auto wrap = [](auto&& f, std::optional<CUDAStream> stream, R* r, rpc::Error* error) {
+            if constexpr (takesStream) {
+              return std::forward<decltype(f)>(f)(stream, r, error);
+            } else {
+              if (stream) {
+                stream->synchronize();
+              }
+              return std::forward<decltype(f)>(f)(r, error);
+            }
+          };
           if constexpr (takesReturnValue) {
             if (error) {
               scheduler.run([me = makeMe(this), callback = std::move(callback), error = std::move(*error)]() mutable {
-                std::move(callback)(nullptr, &error);
+                std::optional<CUDAStream> nullStream;
+                wrap(std::move(callback), nullStream, nullptr, &error);
               });
             } else {
-              scheduler.run([me = makeMe(this), callback = std::move(callback), buffer = std::move(buffer)]() mutable {
+              scheduler.run([me = makeMe(this), callback = std::move(callback), buffer = std::move(buffer),
+                             tensorContext = std::move(tensorContext)]() mutable {
+                std::optional<CUDAStreamGuard> streamGuard;
+                if (tensorContext.stream) {
+                  streamGuard.emplace(*tensorContext.stream);
+                }
                 if constexpr (std::is_same_v<R, void>) {
                   char nonnull;
-                  std::move(callback)((void*)&nonnull, nullptr);
+                  wrap(std::move(callback), tensorContext.stream, (void*)&nonnull, nullptr);
                 } else {
                   uint32_t rid, fid;
                   std::optional<R> r;
@@ -303,10 +372,10 @@ struct Rpc {
                     deserializeBuffer(buffer, rid, fid, *r);
                   } catch (const std::exception& e) {
                     Error err{std::string("Deserialization error: ") + e.what()};
-                    std::move(callback)(nullptr, &err);
+                    wrap(std::move(callback), tensorContext.stream, nullptr, &err);
                     return;
                   }
-                  std::move(callback)(&*r, nullptr);
+                  wrap(std::move(callback), tensorContext.stream, &*r, nullptr);
                 }
               });
             }
@@ -362,12 +431,13 @@ private:
   sendRequest(std::string_view peerName, std::string_view functionName, BufferHandle buffer, ResponseCallback response);
 
   std::atomic_int activeOps{0};
+  std::atomic<ExceptionMode> currentExceptionMode_ = ExceptionMode::DeserializationOnly;
+  std::unique_ptr<Impl> impl_;
+
+  SpinMutex servicesMutex;
   std::unordered_map<
       std::type_index, std::unordered_set<Service, std::hash<std::string_view>, std::equal_to<std::string_view>>>
       services;
-
-  std::atomic<ExceptionMode> currentExceptionMode_ = ExceptionMode::DeserializationOnly;
-  std::unique_ptr<Impl> impl_;
 
   void define(std::string_view name, std::unique_ptr<FBase>&& f);
 };
