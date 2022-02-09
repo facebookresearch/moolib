@@ -222,7 +222,7 @@ struct AccumulatorFindLeaderType {
 
 using ReduceVariant = std::variant<
     rpc::Tensor, std::vector<rpc::Tensor>, GilWrapper<py::object>, AccumulatorFindLeaderType, AccumulatorReductionType,
-    size_t>;
+    size_t, int>;
 
 struct BuiltinOp {
   template<typename T, typename T2>
@@ -329,7 +329,14 @@ struct GroupService {
   GroupService(rpc::Rpc& rpc) : rpc(&rpc) {
     setup();
   }
-  ~GroupService() {}
+  ~GroupService() {
+    close();
+  }
+
+  void close() {
+    rpc->undefine("GroupService::sync");
+    rpc->undefine("GroupService::update");
+  }
 
   void setup() {
 
@@ -516,6 +523,10 @@ struct AllReduceService {
     setup();
   }
 
+  ~AllReduceService() {
+    close();
+  }
+
   template<typename F, typename Op, typename... Args>
   decltype(auto) visit(F&& f, Op&& op, Args&&... args) {
     if constexpr (is_variant_v<Op>) {
@@ -628,6 +639,11 @@ struct AllReduceService {
       h->flags |= 1;
       h->doCallback();
     }
+  }
+
+  void close() {
+    rpc->undefine("AllReduceService::reduce");
+    rpc->undefine("AllReduceService::share");
   }
 
   void setup() {

@@ -38,9 +38,17 @@ struct AccumulatorService {
   AccumulatorService(rpc::Rpc& rpc) : rpc(&rpc) {
     setup();
   }
-  ~AccumulatorService() {}
+  ~AccumulatorService() {
+    close();
+  }
 
   ResourceContainer<AccumulatorResource> resources;
+
+  void close() {
+    rpc->undefine("AccumulatorService::requestModel");
+    rpc->undefine("AccumulatorService::modelUpdate");
+    rpc->undefine("AccumulatorService::buffersUpdate");
+  }
 
   void setup() {
 
