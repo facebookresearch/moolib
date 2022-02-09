@@ -17,16 +17,22 @@ namespace py = pybind11;
 
 template<typename T>
 struct glock {
-  std::unique_lock<T> lock;
-  glock(T& mutex) : lock(mutex, std::try_to_lock) {
-    if (!lock.owns_lock()) {
+  std::unique_lock<T> ulock;
+  glock(T& mutex) : ulock(mutex, std::try_to_lock) {
+    if (!ulock.owns_lock()) {
       if (PyGILState_Check()) {
         py::gil_scoped_release gil;
-        lock.lock();
+        ulock.lock();
       } else {
-        lock.lock();
+        ulock.lock();
       }
     }
+  }
+  void lock() {
+    ulock.lock();
+  }
+  void unlock() {
+    ulock.unlock();
   }
 };
 
