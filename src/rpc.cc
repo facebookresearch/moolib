@@ -135,7 +135,6 @@ TensorContext getTensorContext(Buffer& buffer) {
       auto currentStream = rpc::getCurrentCUDAStream();
       int deviceIndex = currentStream.deviceIndex();
       tensorContext.stream.emplace(rpc::getStreamFromPool(true, deviceIndex));
-      // tensorContext.stream.emplace(rpc::getCurrentCUDAStream(deviceIndex));
       // Small thread-local cache such that we can re-use events.
       thread_local std::unordered_map<int, rpc::CUDAEvent> events;
       auto& event = events[deviceIndex];
@@ -1085,9 +1084,6 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
                           if (error) {
                             me->onError(error);
                           } else {
-                            // scheduler.run([me = makeMe(&*me), allocators = std::move(allocators), buffer =
-                            // std::move(buffer), tensorContext = std::move(tensorContext)]() mutable { auto start =
-                            // std::chrono::steady_clock::now();
                             std::optional<CUDAStreamGuard> sg;
                             if (tensorContext.stream) {
                               sg.emplace(*tensorContext.stream);
@@ -1109,9 +1105,6 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
 
                             me->onData(std::move(buffer), tensorContext);
 
-                            // fmt::printf("processed data in %g\n", seconds(std::chrono::steady_clock::now() - start));
-                            //});
-
                             me->read(std::move(me));
                           }
                         });
@@ -1131,7 +1124,6 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
   void send(Buffer buffer, TensorContext& tensorContext, Deferrer& defer) {
     // rpc.log("%s :: send %d bytes\n", connectionTypeName[index<API>], buffer->size);
     defer([buffer = std::move(buffer), tensorContext = tensorContext, me = makeMe(this)]() mutable {
-      // scheduler.run([buffer = std::move(buffer), tensorContext = tensorContext, me = makeMe(this)]() mutable {
       tensorpipe::Message msg;
       msg.metadata.resize(4);
       if ((uint32_t)buffer->size != buffer->size) {
@@ -1691,7 +1683,6 @@ struct Rpc::Impl {
   void processTimeout(std::chrono::steady_clock::time_point now, T& o, Deferrer& defer) {
     ++o.timeoutCount;
     auto newTimeout = now + std::chrono::seconds(1);
-    // log("process timeout!\n");
     if (o.peer) {
       newTimeout = std::min(newTimeout, processTimeout(o, now, o.resend, defer));
     }
@@ -1834,7 +1825,6 @@ struct Rpc::Impl {
       auto misc = [&]() {
         auto nextRun = lastRanMisc.load() + std::chrono::milliseconds(250);
         if (nextRun <= now) {
-          log("run misc\n");
           lastRanMisc.store(now);
           collectFloatingConnections(now);
           collectGarbage();
@@ -1851,9 +1841,7 @@ struct Rpc::Impl {
       misc();
 
       while (now < timeout && !terminate_.load(std::memory_order_relaxed)) {
-        log("wait for %g\n", seconds(timeout - now));
         timeoutSem_.wait_for(timeout - now);
-        log("woke up\n");
         now = std::chrono::steady_clock::now();
         misc();
         continue;
@@ -1875,14 +1863,6 @@ struct Rpc::Impl {
               }
               newTimeout = std::min(newTimeout, v.second.timeout);
             }
-
-            //            constexpr bool isIncoming = std::is_same_v<std::decay_t<decltype(v.second)>, Incoming>;
-            //            float t = std::chrono::duration_cast<std::chrono::duration<float, std::ratio<1, 1>>>(now -
-            //            v.second.creationTimestamp).count(); if constexpr (isIncoming) {
-            //              log("Response %#x age: %g\n", v.second.rid, t);
-            //            } else {
-            //              log("Request %#x age: %g\n", v.second.rid, t);
-            //            }
           }
           if (anyToRemove) {
             constexpr bool isIncoming = std::is_same_v<std::decay_t<decltype(b.map.begin()->second)>, Incoming>;
@@ -1899,11 +1879,6 @@ struct Rpc::Impl {
                   TensorContext nullTensorContext;
                   std::move(v.response)(nullptr, nullTensorContext, &err);
                 }
-                if (v.resend.connection) {
-                  log("sent over %s\n", connectionTypeName.at(v.resend.connectionIndex));
-                } else {
-                  log("null connection\n");
-                }
                 cleanup(v, defer);
                 i = b.map.erase(i);
               } else {
@@ -1919,46 +1894,6 @@ struct Rpc::Impl {
       timeout = timeout_.load(std::memory_order_relaxed);
       while (newTimeout < timeout && !timeout_.compare_exchange_weak(timeout, newTimeout))
         ;
-      // log("new timeout is in %d\n", std::chrono::duration_cast<std::chrono::milliseconds>(newTimeout - now).count());
-
-      if (false && now - lastPrint >= std::chrono::seconds(5)) {
-        lastPrint = now;
-        size_t incomingBytes = 0;
-        for (auto& b : incoming_) {
-          std::unique_lock l(b.mutex);
-          for (auto& v : b.map) {
-            if (v.second.resend.buffer) {
-              incomingBytes += bufferBytes(v.second.resend.buffer);
-            }
-          }
-        }
-        size_t outgoingBytes = 0;
-        for (auto& b : outgoing_) {
-          std::unique_lock l(b.mutex);
-          for (auto& v : b.map) {
-            if (v.second.resend.buffer) {
-              outgoingBytes += bufferBytes(v.second.resend.buffer);
-            }
-          }
-        }
-        fmt::printf(
-            "Incoming bytes: %gM, outgoing bytes: %gM\n", incomingBytes / 1024.0 / 1024, outgoingBytes / 1024.0 / 1024);
-      }
-
-      //      if (now - lastPrint >= std::chrono::seconds(30)) {
-      //        lastPrint = now;
-      //        std::lock_guard l(peersMutex_);
-      //        for (auto& v : peers_) {
-      //          auto& p = v.second;
-      //          std::lock_guard l(p.idMutex_);
-      //          log("Peer %s (%s)\n", std::string(p.name).c_str(), p.id.toString().c_str());
-      //          for (size_t i = 0; i != p.connections_.size(); ++i) {
-      //            auto& x = p.connections_[i];
-      //            log(" %s x%d  latency %g bandit %g\n", connectionTypeName[i],
-      //            x.sendCount.load(std::memory_order_relaxed), x.runningLatency.load(), x.readBanditValue.load());
-      //          }
-      //        }
-      //      }
     }
   }
 
@@ -2100,7 +2035,6 @@ struct Rpc::Impl {
         c->outgoing = true;
         c->isExplicit = explicit_;
         c->addr = persistentString(addr);
-        // RpcConnectionImpl<API> xx(*u, u->context.connect(std::string(addr)));
         auto cu = std::make_unique<RpcConnectionImpl<API>>(*u, std::move(connection));
         cu->isExplicit = explicit_;
         cu->connectAddr = addr;
@@ -2181,19 +2115,16 @@ struct Rpc::Impl {
   }
 
   bool resend(PeerImpl& peer, Resend& s, Deferrer& defer, std::chrono::steady_clock::time_point now) {
-    // debug("%s resend -> %s\n", myName, peer.name);
     size_t index;
     Me<RpcConnectionImplBase> connection;
     if (peer.banditSend(
             connectionEnabledMask.load(std::memory_order_relaxed), s.buffer, s.tensorContext, defer, now, &index,
             &connection)) {
-      // log("resend %#x %#x success\n", rid, fid);
       s.lastSendTimestamp = now;
       s.connection = std::move(connection);
       s.connectionIndex = index;
       return true;
     } else {
-      // log("resend %#x %#x failure\n", rid, fid);
       s.lastSendFailTimestamp = now;
       s.connection = nullptr;
       return false;
@@ -2318,12 +2249,10 @@ struct Rpc::Impl {
             if (error) {
               std::move(response)(nullptr, nullTensorContext, error);
             } else {
-              // log("got %d bytes\n", recvbuffer->size);
               uint32_t xrid, xfid;
               RemoteFunction rf;
               deserializeBuffer(recvbuffer, xrid, xfid, rf);
               uint32_t fid = rf.id;
-              // log("got id %#x\n", id);
               if (fid == 0) {
                 Error err(
                     "RPC remote function " + std::string(peer->name) + "::'" + std::string(functionName) +
@@ -2366,18 +2295,6 @@ struct Rpc::Impl {
           if (onError_) {
             onError_(*err);
           }
-          //        int nExplicit = 0;
-          //        for (auto& v : listeners_) {
-          //          if (v.explicitCount) {
-          //            ++nExplicit;
-          //          }
-          //        }
-          //        if (nExplicit == 0) {
-          //          l.unlock();
-          //          if (onError_) {
-          //            onError_(*err);
-          //          }
-          //        }
         }
       } else {
         log("accept got connection!\n");
@@ -2849,12 +2766,10 @@ struct RpcImpl : RpcImplBase {
       }
     };
 
-    // log("recv part 0 of rid %#x\n", rid);
     auto& bucket = rpc.getBucket(container, rid);
     std::unique_lock l(bucket.mutex);
     auto xptr = find(bucket, l);
     if (xptr) {
-      // log("recv %d tensors\n", nTensors);
       auto& x = *xptr;
       x.recv.done = true;
       l.unlock();
@@ -3040,15 +2955,6 @@ struct RpcImpl : RpcImplBase {
           def = makeMe(&*i->second);
         }
       }
-      //      auto getFuncName = [&]() {
-      //        std::lock_guard l(rpc.mutex_);
-      //        for (auto& v : rpc.funcIds_) {
-      //          if (v.second == fid) {
-      //            return v.first;
-      //          }
-      //        }
-      //        return (std::string_view) "NOT-FOUND";
-      //      };
       if (!def) {
         BufferHandle buffer;
         serializeToBuffer(buffer, rid, reqFunctionNotFound);
@@ -3057,18 +2963,14 @@ struct RpcImpl : RpcImplBase {
       } else {
         bool recvOk = handleRecv<true>(rpc.incoming_, peer, conn, rid, defer);
         if (recvOk) {
-          // fmt::printf("call %s: time from recv to rpc invoke: %g\n", def->name,
-          // seconds(std::chrono::steady_clock::now() - scheduleTime));
-          // log("got request rid %#x (%s) from %s\n", rid, getFuncName(), peer.name);
 
           auto sf = [weak = weakLock, def = std::move(def), buffer = std::move(buffer), peer = &peer, rid,
-                     tensorContext = std::move(tensorContext), ts = now]() mutable noexcept {
+                     tensorContext = std::move(tensorContext)]() mutable noexcept {
             std::optional<CUDAStreamGuard> streamGuard;
             if (tensorContext.stream) {
               streamGuard.emplace(*tensorContext.stream);
             }
-            auto retfunc = [weak = std::move(weak), peer, rid, ts](BufferHandle outbuffer) mutable {
-              // debug("took %g to handle rpc\n", seconds(std::chrono::steady_clock::now() - ts));
+            auto retfunc = [weak = std::move(weak), peer, rid](BufferHandle outbuffer) mutable {
               auto me = weak->template lock<RpcImpl>();
               if (!me) {
                 return;
@@ -3096,7 +2998,6 @@ struct RpcImpl : RpcImplBase {
                   x.timeout = now + std::chrono::milliseconds(250);
                   x.resend.tensorContext = getTensorContext(shared);
                   x.resend.buffer = std::move(shared);
-                  // log("x is %p, resend.buffer is %p\n", (void*)&x, (void*)&*x.resend.buffer);
                   rpc.resend(*peer, x.resend, defer, now);
 
                   rpc.updateTimeout(now + std::chrono::seconds(1));
