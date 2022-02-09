@@ -7,6 +7,8 @@ import moolib
 import time
 import torch
 
+moolib.set_max_threads(1)
+
 
 def main():
 
@@ -77,13 +79,12 @@ def main():
             print(e)
 
         host = moolib.Rpc()
+        host.define("hello", hello)
         host.set_name("host")
         host.listen(localAddr)
-        host.set_timeout(30)
 
-        # host does not connect to client, so this would normally not work
-        # but since client lost connection to host, it should reconnect automatically
-        print(host.sync("client", "client hello", "I", "am", "back!"))
+        client.set_timeout(30)
+        print(client.sync("host", "hello", "is host alive?"))
 
     weights = torch.randn(4096, 4096)
 
