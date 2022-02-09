@@ -90,10 +90,11 @@ class TestMoolib:
 
         called = False
 
-        def client_hello(*args):
+        def client_hello(a, b, c):
             nonlocal called
             called = True
-            print("client got hello:", (*args,))
+            assert (a, b, c) == (1, 2, 3)
+            return (c, b, a)
 
         client.define("client hello", client_hello)
 
@@ -129,4 +130,5 @@ class TestMoolib:
 
         client.set_timeout(30)
         assert client.sync("host", "hello", "is host alive?") == 42
+        assert host.sync("client", "client hello", 1, 2, 3) == (3, 2, 1)
         assert called
