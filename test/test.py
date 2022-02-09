@@ -7,9 +7,6 @@ import moolib
 import time
 import torch
 
-moolib.set_max_threads(1)
-
-
 def main():
 
     localAddr = "127.0.0.1:4411"
