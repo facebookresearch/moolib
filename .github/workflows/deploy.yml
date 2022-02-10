@@ -24,9 +24,10 @@ jobs:
     - name: Install dependencies
       run: |
         brew install cmake
+        python -m pip install torch numpy pytest-forked gym
     - uses: actions/checkout@v2
       with:
-        submodules: true
+        submodules: recursive
     - name: Generate sdist
       run: |
        USE_CUDA=0 python setup.py sdist
@@ -34,12 +35,12 @@ jobs:
       run: |
         SDISTNAME=$(ls dist/)
         MODE="[all]"
-        pip install "dist/$SDISTNAME$MODE"
+        USE_CUDA=0 pip install "dist/$SDISTNAME$MODE"
     - name: Run tests outside repo dir
       run: |
         REPONAME=$(basename $PWD)
         pushd ..
-        python -um pytest -svx --forked $REPONAME/test/unit $REPONAME/test/integration
+        PYTHONPATH=$REPONAME python -um pytest -svx --forked $REPONAME/test/unit $REPONAME/test/integration
         popd
     - name: Save sdist
       if: ${{ always() }}
@@ -56,6 +57,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
+      with:
+        submodules: recursive
     - name: Check version matches release tag
       run: |
         echo "v$(grep -Po '(?<=version=")[0-9.]+' setup.py)"
