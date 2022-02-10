@@ -109,7 +109,7 @@ In the `moolib` example agent(s), there are several different batch sizes:
     adding to its "running gradient" before it applies the gradient,
     or (2) multiple peers go through one sample each and accumulate
     their gradients. The virtual batch size is then
-    `number_of_peers * learner_batch_size`.
+    `number_of_peers * learner_batch_size`.[^1]
 
 Note that the `virtual_batch_size` setting in moolib is (currently) a
 _lower bound_ on the number of samples required to do a single grad
@@ -120,3 +120,10 @@ what the actual virtual batch size has been at each step. The reason
 bound (instead of as an lower and upper bound) is that it would
 otherwise need to do more synchronisation, which would reduce overall
 throughput.
+
+[^1]: Note that here `number_of_peers` isn't necessarily _all_ peers
+    that participate in the training: Instead, it's how many peers
+    happened to participate in "this" gradient accumulation and due to
+    (1), a peer could participate multiple times. Thus
+    `number_of_peers` can even be higher than the total number of
+    peers in the training.
