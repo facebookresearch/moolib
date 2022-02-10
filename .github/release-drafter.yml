@@ -1,0 +1,31 @@
+---
+name-template: 'v$NEXT_PATCH_VERSION'
+tag-template: 'v$NEXT_PATCH_VERSION'
+categories:
+  - title: '🚀 New Features'
+    label: 'enhancement'
+  - title: '💣 Breaking Change'
+    label: 'breaking change'
+  - title: '🐛 Bug Fixes'
+    label: 'bug'
+  - title: '📝 Documentation'
+    label: 'docs'
+  - title: '🔨 Maintenance'
+    label: 'chore'
+exclude-labels:
+  - 'skip changelog'
+change-template: '- $TITLE (#$NUMBER, @$AUTHOR)'
+template: |
+  # Installing NLE
+
+  Install with pip: `pip install nle==$NEXT_PATCH_VERSION`.
+
+  Or pull the docker image: `docker pull fairnle/nle:$NEXT_PATCH_VERSION`.
+
+  See [README.md](https://github.com/facebookresearch/nle/blob/v$NEXT_PATCH_VERSION/README.md) and/or [docker/README.md](https://github.com/facebookresearch/nle/blob/v$NEXT_PATCH_VERSION/docker/README.md) for further instructions.
+
+
+  # New in NLE v$NEXT_PATCH_VERSION
+
+  $CHANGES
+...

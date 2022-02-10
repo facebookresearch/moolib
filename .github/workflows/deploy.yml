@@ -1,0 +1,82 @@
+---
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  release:
+    types: [released]
+
+
+jobs:
+  test_sdist:
+    name: Test sdist on MacOS w/ Py3.8
+    needs: test_repo
+    runs-on: macos-latest
+    steps:
+    - name: Setup Python 3.8 env
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.8
+    - name: Ensure latest pip & wheel
+      run: "python -m pip install -q --upgrade pip wheel"
+    - name: Install dependencies
+      run: |
+        brew install cmake
+    - uses: actions/checkout@v2
+      with:
+        submodules: true
+    - name: Generate sdist
+      run: |
+       USE_CUDA=0 python setup.py sdist
+    - name: Install from sdist
+      run: |
+        SDISTNAME=$(ls dist/)
+        MODE="[all]"
+        pip install "dist/$SDISTNAME$MODE"
+    - name: Run tests outside repo dir
+      run: |
+        REPONAME=$(basename $PWD)
+        pushd ..
+        python -um pytest -svx --forked $REPONAME/test/unit $REPONAME/test/integration
+        popd
+    - name: Save sdist
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v1
+      with:
+        name: moolib_dist
+        path: dist/
+
+  # TODO move to separate workflow?
+  deploy_sdist:
+    name: Deploy sdist to pypi
+    needs: test_sdist
+    if: github.event_name == 'release' && github.event.action == 'released'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Check version matches release tag
+      run: |
+        echo "v$(grep -Po '(?<=version=")[0-9.]+' setup.py)"
+        echo "${{ github.event.release.tag_name }}"
+        [[ "${{ github.event.release.tag_name }}" == "v$(grep -Po '(?<=version=")[0-9.]+' setup.py)" ]]
+    - name: Get dist artifacts from test_sdist
+      uses: actions/download-artifact@v2
+      with:
+        name: moolib_dist
+        path: dist
+    - name: Install from sdist
+      run: |
+        pwd
+        ls -R
+        ls -al .
+        ls -R dist/
+        ls -al dist/
+    # NOTE: We assume that dist/ contains a built sdist (and only that).
+    - name: Publish package to PyPI
+      uses: pypa/gh-action-pypi-publish@master
+      with:
+        user: __token__
+        password: ${{ secrets.PYPI_TOKEN }}
