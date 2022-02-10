@@ -13,7 +13,6 @@ on:
 jobs:
   test_sdist:
     name: Test sdist on MacOS w/ Py3.8
-    needs: test_repo
     runs-on: macos-latest
     steps:
     - name: Setup Python 3.8 env
