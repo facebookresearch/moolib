@@ -16,16 +16,14 @@ exclude-labels:
   - 'skip changelog'
 change-template: '- $TITLE (#$NUMBER, @$AUTHOR)'
 template: |
-  # Installing NLE
+  # Installing `moolib`
 
-  Install with pip: `pip install nle==$NEXT_PATCH_VERSION`.
+  Install with pip: `pip install moolib==$NEXT_PATCH_VERSION`.
 
-  Or pull the docker image: `docker pull fairnle/nle:$NEXT_PATCH_VERSION`.
-
-  See [README.md](https://github.com/facebookresearch/nle/blob/v$NEXT_PATCH_VERSION/README.md) and/or [docker/README.md](https://github.com/facebookresearch/nle/blob/v$NEXT_PATCH_VERSION/docker/README.md) for further instructions.
+  See [README.md](https://github.com/facebookresearch/moolib/blob/v$NEXT_PATCH_VERSION/README.md) for further instructions.
 
 
-  # New in NLE v$NEXT_PATCH_VERSION
+  # New in `moolib` v$NEXT_PATCH_VERSION
 
   $CHANGES
 ...
