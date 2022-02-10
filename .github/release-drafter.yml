@@ -1,0 +1,29 @@
+---
+name-template: 'v$NEXT_PATCH_VERSION'
+tag-template: 'v$NEXT_PATCH_VERSION'
+categories:
+  - title: '🚀 New Features'
+    label: 'enhancement'
+  - title: '💣 Breaking Change'
+    label: 'breaking change'
+  - title: '🐛 Bug Fixes'
+    label: 'bug'
+  - title: '📝 Documentation'
+    label: 'docs'
+  - title: '🔨 Maintenance'
+    label: 'chore'
+exclude-labels:
+  - 'skip changelog'
+change-template: '- $TITLE (#$NUMBER, @$AUTHOR)'
+template: |
+  # Installing `moolib`
+
+  Install with pip: `pip install moolib==$NEXT_PATCH_VERSION`.
+
+  See [README.md](https://github.com/facebookresearch/moolib/blob/v$NEXT_PATCH_VERSION/README.md) for further instructions.
+
+
+  # New in `moolib` v$NEXT_PATCH_VERSION
+
+  $CHANGES
+...
