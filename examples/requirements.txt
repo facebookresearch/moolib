@@ -1,2 +1,3 @@
 gym[atari, accept-rom-license]
 opencv-python
+pygame  # Additional requirement for cartpole.
