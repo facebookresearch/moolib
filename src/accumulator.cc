@@ -22,6 +22,7 @@ struct AccumulatorResource : ResourceObject<AccumulatorResource> {
   int64_t newModelVersion = 0;
   bool haveNewParameters = false;
   bool haveNewBuffers = false;
+  bool isWaitingForModel = false;
   std::vector<rpc::Tensor> newParameters;
   std::vector<rpc::Tensor> newBuffers;
   GilWrapper<py::object> newUserState;
@@ -38,9 +39,17 @@ struct AccumulatorService {
   AccumulatorService(rpc::Rpc& rpc) : rpc(&rpc) {
     setup();
   }
-  ~AccumulatorService() {}
+  ~AccumulatorService() {
+    close();
+  }
 
   ResourceContainer<AccumulatorResource> resources;
+
+  void close() {
+    // rpc->undefine("AccumulatorService::requestModel");
+    // rpc->undefine("AccumulatorService::modelUpdate");
+    // rpc->undefine("AccumulatorService::buffersUpdate");
+  }
 
   void setup() {
 
@@ -77,7 +86,7 @@ struct AccumulatorService {
               log.debug("Got model update for wrong syncId (%#x, should be %#x)\n", syncId, h->syncId);
               return false;
             }
-            if (isRegularUpdate && modelVersion != h->modelVersion) {
+            if (isRegularUpdate && modelVersion != h->modelVersion && !h->isWaitingForModel) {
               log.debug(
                   "Got regular model update for wrong modelVersion (%#x, should be %#x)\n", modelVersion,
                   h->modelVersion);
@@ -179,7 +188,6 @@ struct AccumulatorImpl {
   bool hasReceivedModel_ = false;
 
   std::string myName;
-  bool isWaitingForModel = false;
   std::chrono::steady_clock::time_point isWaitingForModelTimestamp;
 
   std::chrono::steady_clock::time_point lastSentBuffers;
@@ -190,15 +198,18 @@ struct AccumulatorImpl {
   bool wantsUserState_ = false;
   bool hasNewUserState_ = false;
   GilWrapper<py::object> userState_;
-  async::SchedulerFifo async{8};
+  // async::SchedulerFifo async{8};
 
   using ReductionType = AccumulatorReductionType;
 
   struct ReduceGradientsContainer {
+    size_t index = 0;
     bool reduceStarted = false;
     bool reduceDone = false;
     bool isCounting = false;
     bool wantsMoreCounting = false;
+    bool isCopying = false;
+    bool wantsReduce = false;
     ResultCallback result;
     ResourceHandle<AllReduceOperation> reduce;
     ReductionType data;
@@ -219,7 +230,6 @@ struct AccumulatorImpl {
 
   size_t nextGradientReductionIndex = 0;
   size_t nextGradientReductionResultIndex = 0;
-  bool isCopyingGradients = false;
 
   std::shared_ptr<ResultCallback> requestModelResult;
 
@@ -371,12 +381,15 @@ struct AccumulatorImpl {
   }
   bool wantsGradients() const {
     glock l(h->mutex);
-    return connectedImpl() && wantsGradientsAtIndex(nextGradientReductionIndex) & !isWaitingForModel &
-                                  !isFindingLeader & !isCopyingGradients & !hasGradients_;
+    return connectedImpl() && wantsGradientsAtIndex(nextGradientReductionIndex) & !h->isWaitingForModel &
+                                  !isFindingLeader & !hasGradients_;
   }
 
   bool wantsGradientsAtIndex(size_t index) const {
     auto& v = gradientReductions.at(index);
+    if (v && v->isCopying) {
+      return false;
+    }
     return !v || v->reduceDone || !v->reduceStarted;
   }
 
@@ -443,7 +456,7 @@ struct AccumulatorImpl {
       return;
     }
     log.verbose("Requesting model\n");
-    isWaitingForModel = true;
+    h->isWaitingForModel = true;
     isWaitingForModelTimestamp = std::chrono::steady_clock::now();
     requestModelResult = std::make_shared<ResultCallback>();
     rpc->asyncCallback<bool>(
@@ -459,7 +472,7 @@ struct AccumulatorImpl {
           } else {
             log.error("requestModel RPC failed; %s", error->what());
           }
-          *requestModelResult = [this]() { onError(); };
+          //*requestModelResult = [this]() { onError(); };
         },
         resName_, h->syncId, myName);
   };
@@ -482,6 +495,17 @@ struct AccumulatorImpl {
 
   std::chrono::steady_clock::time_point lastlog = std::chrono::steady_clock::now();
 
+  void checkGradientResultCallback() {
+    auto& v = gradientReductions[nextGradientReductionResultIndex];
+    if (v && !v->isCopying && v->result.tryCall()) {
+      if (nextGradientReductionResultIndex == gradientReductions.size() - 1) {
+        nextGradientReductionResultIndex = 0;
+      } else {
+        ++nextGradientReductionResultIndex;
+      }
+    }
+  }
+
   void update() {
     rpc::AutoGradMode ng(false);
 
@@ -503,7 +527,6 @@ struct AccumulatorImpl {
       if (r) {
         if (r->tryCall()) {
           r = {};
-
           return true;
         }
       }
@@ -515,17 +538,7 @@ struct AccumulatorImpl {
         log.verbose("I am now the leader!\n");
       }
     }
-    if (!hasGradients_ && !isCopyingGradients) {
-      auto& v = gradientReductions[nextGradientReductionResultIndex];
-      if (v) {
-        result(&v->result);
-        if (nextGradientReductionResultIndex == gradientReductions.size() - 1) {
-          nextGradientReductionResultIndex = 0;
-        } else {
-          ++nextGradientReductionResultIndex;
-        }
-      }
-    }
+    checkGradientResultCallback();
 
     result(requestModelResult);
 
@@ -547,7 +560,7 @@ struct AccumulatorImpl {
       wantsUserState_ = false;
 
       isFindingLeader = true;
-      isWaitingForModel = false;
+      h->isWaitingForModel = false;
       hasGradients_ = false;
       members_.clear();
       if (h->syncId == 0) {
@@ -587,6 +600,8 @@ struct AccumulatorImpl {
                   log.verbose("Group has %d members\n", members_.size());
                   if (modelVersion != h->modelVersion || !hasReceivedModel_) {
                     requestModel();
+                  } else {
+                    lastReceivedModel = std::chrono::steady_clock::now();
                   }
                 };
               } else {
@@ -602,7 +617,7 @@ struct AccumulatorImpl {
     }
 
     if (h->haveNewParameters) {
-      if (!isWaitingForModel && h->modelVersion != h->newModelVersion) {
+      if (!h->isWaitingForModel && h->modelVersion != h->newModelVersion) {
         h->haveNewParameters = false;
         log.debug(
             "ignoring unexpected new params due to modelVersion mismatch (got %d, expected %d)\n", h->newModelVersion,
@@ -610,14 +625,14 @@ struct AccumulatorImpl {
       } else {
         log.debug("DEBUG new params\n");
         commitModelUpdate();
-        isWaitingForModel = false;
+        h->isWaitingForModel = false;
       }
-    } else if (isWaitingForModel && now - isWaitingForModelTimestamp >= std::chrono::seconds(10)) {
+    } else if (h->isWaitingForModel && now - isWaitingForModelTimestamp >= std::chrono::seconds(60)) {
       log.debug("Timed out waiting for model, retrying\n");
       requestModel();
     } else if (
-        !isWaitingForModel && connectedImpl() && syncLeader != myName &&
-        now - lastReceivedModel >= std::chrono::minutes(2)) {
+        !h->isWaitingForModel && connectedImpl() && syncLeader != myName &&
+        now - lastReceivedModel >= std::chrono::minutes(30)) {
       log.verbose("EMERGENCY RESYNC TO GET MODEL UPDATE!\n");
       lastReceivedModel = now;
       resync();
@@ -632,9 +647,9 @@ struct AccumulatorImpl {
 
     if (logit) {
       log.debug("DEBUG connected: %d\n", connectedImpl());
-      log.debug("DEBUG isWaitingForModel: %d\n", isWaitingForModel);
+      log.debug("DEBUG isWaitingForModel: %d\n", h->isWaitingForModel);
       log.debug("DEBUG isFindingLeader: %d\n", isFindingLeader);
-      log.debug("DEBUG isCopyingGradients: %d\n", isCopyingGradients);
+      // log.debug("DEBUG isCopyingGradients: %d\n", isCopyingGradients);
       log.debug("DEBUG nextGradientReductionIndex: %d\n", nextGradientReductionIndex);
       log.debug("DEBUG nextGradientReductionResultIndex: %d\n", nextGradientReductionResultIndex);
     }
@@ -708,6 +723,14 @@ struct AccumulatorImpl {
 
     auto now = std::chrono::steady_clock::now();
 
+    for (auto& n : h->requestedModelUpdate) {
+      if (n != myName && std::find(members_.begin(), members_.end(), n) != members_.end()) {
+        call<bool>(
+            n, "AccumulatorService::modelUpdate", resName_, h->syncId, false, h->modelVersion, sendParameters,
+            sendBuffers, userState_);
+      }
+    }
+
     if (isItTimeForRegularModelUpdateYet(now)) {
       lastSentModel = now;
       log.debug("Sending regular model/state update\n");
@@ -715,14 +738,6 @@ struct AccumulatorImpl {
         if (n != myName) {
           call<bool>(
               n, "AccumulatorService::modelUpdate", resName_, h->syncId, true, h->modelVersion, sendParameters,
-              sendBuffers, userState_);
-        }
-      }
-    } else {
-      for (auto& n : h->requestedModelUpdate) {
-        if (n != myName && std::find(members_.begin(), members_.end(), n) != members_.end()) {
-          call<bool>(
-              n, "AccumulatorService::modelUpdate", resName_, h->syncId, false, h->modelVersion, sendParameters,
               sendBuffers, userState_);
         }
       }
@@ -735,7 +750,7 @@ struct AccumulatorImpl {
 
   bool isItTimeForRegularModelUpdateYet(std::chrono::steady_clock::time_point now) {
     if (syncLeader == myName) {
-      if (now - lastSentModel >= std::chrono::seconds(30)) {
+      if (now - lastSentModel >= std::chrono::seconds(600)) {
         return true;
       }
     }
@@ -777,9 +792,9 @@ struct AccumulatorImpl {
       throw std::runtime_error("Model buffers size mismatch in update!");
     }
 
-    for (size_t i = 0; i != h->modelBuffers.size(); ++i) {
-      h->modelBuffers[i].copy_(h->newBuffers[i], true);
-    }
+    //    for (size_t i = 0; i != h->modelBuffers.size(); ++i) {
+    //      h->modelBuffers[i].copy_(h->newBuffers[i], true);
+    //    }
   }
 
   void commitModelUpdate() {
@@ -797,12 +812,12 @@ struct AccumulatorImpl {
       throw std::runtime_error("Model parameters size mismatch in update!");
     }
 
-    for (size_t i = 0; i != h->modelParameters.size(); ++i) {
-      h->modelParameters[i].copy_(h->newParameters[i], true);
-    }
-    for (size_t i = 0; i != h->modelBuffers.size(); ++i) {
-      h->modelBuffers[i].copy_(h->newBuffers[i], true);
-    }
+    //    for (size_t i = 0; i != h->modelParameters.size(); ++i) {
+    //      h->modelParameters[i].copy_(h->newParameters[i], true);
+    //    }
+    //    for (size_t i = 0; i != h->modelBuffers.size(); ++i) {
+    //      h->modelBuffers[i].copy_(h->newBuffers[i], true);
+    //    }
 
     py::gil_scoped_acquire gil;
     userState_ = std::move(h->newUserState);
@@ -868,6 +883,7 @@ struct AccumulatorImpl {
     }
     if (!target || target->reduceDone) {
       target = gradientReductions[index] = std::make_shared<ReduceGradientsContainer>(this);
+      target->index = index;
     }
 
     if (nextGradientReductionIndex == gradientReductions.size() - 1) {
@@ -876,24 +892,39 @@ struct AccumulatorImpl {
       ++nextGradientReductionIndex;
     }
 
-    isCopyingGradients = true;
+    target->isCopying = true;
 
-    std::optional<rpc::CUDAStream> stream;
+    auto copyStart = std::chrono::steady_clock::now();
+
+    std::optional<rpc::CUDAStream> sourceStream;
     if (gradsOnCuda) {
-      stream.emplace(rpc::getCurrentCUDAStream());
+      sourceStream.emplace(rpc::getCurrentCUDAStream());
     }
 
     target->syncId = h->syncId;
 
-    // async.run([this, batchSize, target, index, stream = std::move(stream), syncId = h->syncId]() mutable noexcept {
+    // async.run([this, batchSize, target, sourceStream = std::move(sourceStream), syncId = h->syncId]() mutable
+    // noexcept {
+    std::optional<rpc::CUDAStream> stream;
+    std::optional<rpc::CUDAStreamGuard> sg;
     Dtor dtor = [&] {
       // std::lock_guard l(h->mutex);
-      actuallyZeroGradients();
-      isCopyingGradients = false;
+      if (batchSize) {
+        actuallyZeroGradients();
+        if (stream) {
+          stream->synchronize();
+        }
+      }
+      target->isCopying = false;
+      log.debug("gradients copy finished in %g\n", seconds(std::chrono::steady_clock::now() - copyStart));
+      if (target->wantsReduce) {
+        startReduce(target);
+      }
     };
-    std::optional<rpc::CUDAStreamGuard> sg;
-    if (stream) {
-      sg.emplace(*stream);
+    if (sourceStream) {
+      // stream = rpc::getStreamFromPool(false, sourceStream->deviceIndex());
+      // sg.emplace(*stream);
+      sourceStream->synchronize();
     }
     rpc::AutoGradMode ng(false);
     bool synchronize = false;
@@ -952,7 +983,7 @@ struct AccumulatorImpl {
           target->wantsMoreCounting = true;
         } else {
           log.debug("Start new count!\n");
-          startCount(index, std::move(target));
+          startCount(target);
         }
       }
     } catch (const std::exception& e) {
@@ -961,51 +992,71 @@ struct AccumulatorImpl {
     //});
   }
 
-  void startCount(size_t index, std::shared_ptr<ReduceGradientsContainer> target) {
+  void startReduce(std::shared_ptr<ReduceGradientsContainer> target) {
     if (target->syncId != h->syncId || target->syncId != group->syncId) {
       return;
     }
-    log.debug("startCount index %d called with local batch size of %d\n", index, target->data.batchSize);
-    target->isCounting = true;
+    auto now = std::chrono::steady_clock::now();
+    target->reduceStarted = true;
     target->reduce = allReduceService->allReduce(
-        group, fmt::sprintf("Accumulator reduce size %d", index), target->data.batchSize,
+        group, fmt::sprintf("Accumulator reduce %d", target->index), target->data,
+        [&](ReductionType& a, ReductionType& b) { a.add(b); },
+        [target, this, starttime = now](ReductionType* v, [[maybe_unused]] rpc::Error* error) {
+          auto now = std::chrono::steady_clock::now();
+          log.verbose("grads reduce finished in %g\n", seconds(now - starttime));
+          if (v) {
+            auto& result = target->result;
+            result = [target = std::move(target), this, result = std::move(*v), starttime = now]() mutable {
+              auto now = std::chrono::steady_clock::now();
+              log.verbose("grads execute result in %g\n", seconds(now - starttime));
+              target->reduceDone = true;
+              log.debug(
+                  "reduce done, batch size %d/%d  (%d grads, %d skipped)\n", result.batchSize, virtualBatchSize,
+                  result.numGradients, result.numSkipped);
+              setGradients(result);
+            };
+          } else {
+            log.error("Accumulator reduction failed; %s", error->what());
+            target->result = [this]() mutable { onError(); };
+          }
+        });
+  }
+
+  void startCount(std::shared_ptr<ReduceGradientsContainer> target) {
+    if (target->syncId != h->syncId || target->syncId != group->syncId) {
+      return;
+    }
+    log.debug("startCount index %d called with local batch size of %d\n", target->index, target->data.batchSize);
+    target->isCounting = true;
+    auto now = std::chrono::steady_clock::now();
+    target->reduce = allReduceService->allReduce(
+        group, fmt::sprintf("Accumulator reduce size %d", target->index), target->data.batchSize,
         [&](size_t& a, size_t& b) { a += b; },
-        [target, this, index](size_t* size, [[maybe_unused]] rpc::Error* error) {
+        [target, this, starttime = now](size_t* size, [[maybe_unused]] rpc::Error* error) {
+          auto now = std::chrono::steady_clock::now();
+          log.verbose("count reduce finished in %g\n", seconds(now - starttime));
           auto& result = target->result;
           if (size) {
             log.verbose("reduce ready batch size %d/%d\n", *size, virtualBatchSize);
             if (*size >= virtualBatchSize) {
               log.debug("That's enough, start reduce!\n");
-              result = [target = std::move(target), this, index]() mutable {
+              result = [target = std::move(target), this, starttime = now]() mutable {
+                auto now = std::chrono::steady_clock::now();
+                log.verbose("count execute result in %g\n", seconds(now - starttime));
                 if (target->syncId != h->syncId || target->syncId != group->syncId) {
                   return;
                 }
-                target->reduceStarted = true;
-                target->reduce = allReduceService->allReduce(
-                    group, fmt::sprintf("Accumulator reduce %d", index), target->data,
-                    [&](ReductionType& a, ReductionType& b) { a.add(b); },
-                    [target, this](ReductionType* v, [[maybe_unused]] rpc::Error* error) {
-                      if (v) {
-                        auto& result = target->result;
-                        result = [target = std::move(target), this, result = std::move(*v)]() mutable {
-                          target->reduceDone = true;
-                          log.debug(
-                              "reduce done, batch size %d/%d  (%d grads, %d skipped)\n", result.batchSize,
-                              virtualBatchSize, result.numGradients, result.numSkipped);
-                          setGradients(result);
-                        };
-                      } else {
-                        log.error("Accumulator reduction failed; %s", error->what());
-                        target->result = [this]() mutable { onError(); };
-                      }
-                    });
+                target->wantsReduce = true;
+                if (!target->isCopying) {
+                  startReduce(std::move(target));
+                }
               };
             } else {
               log.debug("Not enough, start new count!\n");
-              result = [target = std::move(target), this, index]() mutable {
+              result = [target = std::move(target), this]() mutable {
                 target->isCounting = false;
                 if (target->wantsMoreCounting) {
-                  startCount(index, target);
+                  startCount(target);
                 }
               };
             }

@@ -1270,7 +1270,18 @@ struct AllReduceWrapper : FutureWrapper {
 
 struct GroupWrapper : Group {
   GroupWrapper(std::shared_ptr<rpc::Rpc> rpc, std::string groupName) : Group(std::move(rpc), std::move(groupName)) {}
-  std::shared_ptr<AllReduceWrapper> allReduce(std::string name, py::object data, py::object op = py::none()) {
+  std::shared_ptr<AllReduceWrapper> allReduce(std::string name, py::object data, py::kwargs kwargs) {
+
+    py::object op = py::none();
+    size_t numTrees = -1;
+
+    if (kwargs.contains("op")) {
+      op = kwargs["op"];
+    }
+    if (kwargs.contains("num_trees")) {
+      numTrees = py::int_(kwargs["num_trees"]);
+    }
+
     py::gil_scoped_release gil;
     Promise<AllReduceWrapper> promise;
     auto future = promise.getFuture();
@@ -1317,10 +1328,8 @@ struct GroupWrapper : Group {
       future->h = std::move(h);
       return future;
     }
-    if (py::isinstance<py::list>(data)) {
-    }
-    fatal("all_reduce can only use a builtin operator with Tensor or list of Tensors. Please specify an operator "
-          "function");
+    throw std::runtime_error(
+        "all_reduce can only use the default operator on Tensor data. Please specify an operator function");
   }
 };
 
