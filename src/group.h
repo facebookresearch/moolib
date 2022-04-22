@@ -748,7 +748,7 @@ struct AllReduceService {
       }
 
       // we can deadlock depending on user code (mutexes) if we don't dispatch this to another thread
-      rpc::scheduler.run([this, me = rpc::makeMe(this)]{
+      rpc::scheduler.run([this, me = rpc::makeMe(this)] {
         auto now = std::chrono::steady_clock::now();
         auto timeout = rpc->getTimeout();
         std::lock_guard l(queueMutex);

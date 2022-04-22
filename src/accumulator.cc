@@ -46,9 +46,9 @@ struct AccumulatorService {
   ResourceContainer<AccumulatorResource> resources;
 
   void close() {
-    //rpc->undefine("AccumulatorService::requestModel");
-    //rpc->undefine("AccumulatorService::modelUpdate");
-    //rpc->undefine("AccumulatorService::buffersUpdate");
+    // rpc->undefine("AccumulatorService::requestModel");
+    // rpc->undefine("AccumulatorService::modelUpdate");
+    // rpc->undefine("AccumulatorService::buffersUpdate");
   }
 
   void setup() {
@@ -198,7 +198,7 @@ struct AccumulatorImpl {
   bool wantsUserState_ = false;
   bool hasNewUserState_ = false;
   GilWrapper<py::object> userState_;
-  //async::SchedulerFifo async{8};
+  // async::SchedulerFifo async{8};
 
   using ReductionType = AccumulatorReductionType;
 
@@ -649,7 +649,7 @@ struct AccumulatorImpl {
       log.debug("DEBUG connected: %d\n", connectedImpl());
       log.debug("DEBUG isWaitingForModel: %d\n", h->isWaitingForModel);
       log.debug("DEBUG isFindingLeader: %d\n", isFindingLeader);
-      //log.debug("DEBUG isCopyingGradients: %d\n", isCopyingGradients);
+      // log.debug("DEBUG isCopyingGradients: %d\n", isCopyingGradients);
       log.debug("DEBUG nextGradientReductionIndex: %d\n", nextGradientReductionIndex);
       log.debug("DEBUG nextGradientReductionResultIndex: %d\n", nextGradientReductionResultIndex);
     }
@@ -792,9 +792,9 @@ struct AccumulatorImpl {
       throw std::runtime_error("Model buffers size mismatch in update!");
     }
 
-//    for (size_t i = 0; i != h->modelBuffers.size(); ++i) {
-//      h->modelBuffers[i].copy_(h->newBuffers[i], true);
-//    }
+    //    for (size_t i = 0; i != h->modelBuffers.size(); ++i) {
+    //      h->modelBuffers[i].copy_(h->newBuffers[i], true);
+    //    }
   }
 
   void commitModelUpdate() {
@@ -812,12 +812,12 @@ struct AccumulatorImpl {
       throw std::runtime_error("Model parameters size mismatch in update!");
     }
 
-//    for (size_t i = 0; i != h->modelParameters.size(); ++i) {
-//      h->modelParameters[i].copy_(h->newParameters[i], true);
-//    }
-//    for (size_t i = 0; i != h->modelBuffers.size(); ++i) {
-//      h->modelBuffers[i].copy_(h->newBuffers[i], true);
-//    }
+    //    for (size_t i = 0; i != h->modelParameters.size(); ++i) {
+    //      h->modelParameters[i].copy_(h->newParameters[i], true);
+    //    }
+    //    for (size_t i = 0; i != h->modelBuffers.size(); ++i) {
+    //      h->modelBuffers[i].copy_(h->newBuffers[i], true);
+    //    }
 
     py::gil_scoped_acquire gil;
     userState_ = std::move(h->newUserState);
@@ -903,91 +903,92 @@ struct AccumulatorImpl {
 
     target->syncId = h->syncId;
 
-    //async.run([this, batchSize, target, sourceStream = std::move(sourceStream), syncId = h->syncId]() mutable noexcept {
-      std::optional<rpc::CUDAStream> stream;
-      std::optional<rpc::CUDAStreamGuard> sg;
-      Dtor dtor = [&] {
-        //std::lock_guard l(h->mutex);
-        if (batchSize) {
-          actuallyZeroGradients();
-          if (stream) {
-            stream->synchronize();
-          }
-        }
-        target->isCopying = false;
-        log.debug("gradients copy finished in %g\n", seconds(std::chrono::steady_clock::now() - copyStart));
-        if (target->wantsReduce) {
-          startReduce(target);
-        }
-      };
-      if (sourceStream) {
-        //stream = rpc::getStreamFromPool(false, sourceStream->deviceIndex());
-        //sg.emplace(*stream);
-        sourceStream->synchronize();
-      }
-      rpc::AutoGradMode ng(false);
-      bool synchronize = false;
+    // async.run([this, batchSize, target, sourceStream = std::move(sourceStream), syncId = h->syncId]() mutable
+    // noexcept {
+    std::optional<rpc::CUDAStream> stream;
+    std::optional<rpc::CUDAStreamGuard> sg;
+    Dtor dtor = [&] {
+      // std::lock_guard l(h->mutex);
       if (batchSize) {
-        ++target->data.numGradients;
-        target->data.batchSize += batchSize;
-        bool add = true;
-        if (target->data.gradients.empty()) {
-          target->data.gradients = allocateGradients();
-          add = false;
-        }
-        auto& targetGradients = target->data.gradients;
-        size_t i = 0;
-        std::vector<rpc::Tensor> addGrads;
-        for (auto& v : h->modelParameters) {
-          auto grad = v.grad();
-          if (grad.defined()) {
-            if (i == targetGradients.size()) {
-              fatal("grads grew?");
-            }
-            if (add) {
-              addGrads.push_back(grad.to(targetGradients[i].device(), true));
-            } else {
-              targetGradients[i].copy_(grad, true);
-            }
-            ++i;
-          }
-        }
-        if (i != targetGradients.size()) {
-          fatal("grads shrank?");
-        }
-        synchronize = gradsOnCuda;
-        if (synchronize && stream) {
+        actuallyZeroGradients();
+        if (stream) {
           stream->synchronize();
         }
-        if (add) {
-          for (size_t i = 0; i != addGrads.size(); ++i) {
-            targetGradients[i].add_(addGrads[i]);
-          }
-          if (synchronize && stream) {
-            stream->synchronize();
-          }
-        }
-      } else {
-        ++target->data.numSkipped;
       }
+      target->isCopying = false;
+      log.debug("gradients copy finished in %g\n", seconds(std::chrono::steady_clock::now() - copyStart));
+      if (target->wantsReduce) {
+        startReduce(target);
+      }
+    };
+    if (sourceStream) {
+      // stream = rpc::getStreamFromPool(false, sourceStream->deviceIndex());
+      // sg.emplace(*stream);
+      sourceStream->synchronize();
+    }
+    rpc::AutoGradMode ng(false);
+    bool synchronize = false;
+    if (batchSize) {
+      ++target->data.numGradients;
+      target->data.batchSize += batchSize;
+      bool add = true;
+      if (target->data.gradients.empty()) {
+        target->data.gradients = allocateGradients();
+        add = false;
+      }
+      auto& targetGradients = target->data.gradients;
+      size_t i = 0;
+      std::vector<rpc::Tensor> addGrads;
+      for (auto& v : h->modelParameters) {
+        auto grad = v.grad();
+        if (grad.defined()) {
+          if (i == targetGradients.size()) {
+            fatal("grads grew?");
+          }
+          if (add) {
+            addGrads.push_back(grad.to(targetGradients[i].device(), true));
+          } else {
+            targetGradients[i].copy_(grad, true);
+          }
+          ++i;
+        }
+      }
+      if (i != targetGradients.size()) {
+        fatal("grads shrank?");
+      }
+      synchronize = gradsOnCuda;
       if (synchronize && stream) {
         stream->synchronize();
       }
-
-      try {
-        //std::lock_guard l(h->mutex);
-        if (target->syncId == h->syncId && target->syncId == group->syncId) {
-          if (target->isCounting) {
-            log.debug("Already counting!\n");
-            target->wantsMoreCounting = true;
-          } else {
-            log.debug("Start new count!\n");
-            startCount(target);
-          }
+      if (add) {
+        for (size_t i = 0; i != addGrads.size(); ++i) {
+          targetGradients[i].add_(addGrads[i]);
         }
-      } catch (const std::exception& e) {
-        fatal("exception %s\n", e.what());
+        if (synchronize && stream) {
+          stream->synchronize();
+        }
       }
+    } else {
+      ++target->data.numSkipped;
+    }
+    if (synchronize && stream) {
+      stream->synchronize();
+    }
+
+    try {
+      // std::lock_guard l(h->mutex);
+      if (target->syncId == h->syncId && target->syncId == group->syncId) {
+        if (target->isCounting) {
+          log.debug("Already counting!\n");
+          target->wantsMoreCounting = true;
+        } else {
+          log.debug("Start new count!\n");
+          startCount(target);
+        }
+      }
+    } catch (const std::exception& e) {
+      fatal("exception %s\n", e.what());
+    }
     //});
   }
 
@@ -1010,8 +1011,8 @@ struct AccumulatorImpl {
               log.verbose("grads execute result in %g\n", seconds(now - starttime));
               target->reduceDone = true;
               log.debug(
-                  "reduce done, batch size %d/%d  (%d grads, %d skipped)\n", result.batchSize,
-                  virtualBatchSize, result.numGradients, result.numSkipped);
+                  "reduce done, batch size %d/%d  (%d grads, %d skipped)\n", result.batchSize, virtualBatchSize,
+                  result.numGradients, result.numSkipped);
               setGradients(result);
             };
           } else {
