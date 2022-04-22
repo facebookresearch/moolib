@@ -511,9 +511,17 @@ struct AllReduceService {
   std::mutex queueMutex;
   std::vector<QueueEntry> queue;
 
+  std::atomic_int activeOps = 0;
+
   AllReduceService(rpc::Rpc& rpc) : rpc(&rpc) {
     groupService = this->rpc->getService<GroupService>("GroupService");
     setup();
+  }
+
+  ~AllReduceService() {
+    while (activeOps) {
+      std::this_thread::yield();
+    }
   }
 
   template<typename F, typename Op, typename... Args>
@@ -571,7 +579,7 @@ struct AllReduceService {
       }
       bool done;
       {
-        std::lock_guard l(h->opMutex);
+        glock l(h->opMutex);
         if (h->hasReceived[receiveIndex].exchange(true, std::memory_order_relaxed)) {
           return false;
         }
@@ -636,7 +644,7 @@ struct AllReduceService {
         [this](std::string_view name, uint32_t syncId, size_t sourcePeerIndex, ReduceVariant data) {
           log.debug("%s recv reduce %d\n", rpc->getName(), sourcePeerIndex);
           if (!reduce(name, syncId, sourcePeerIndex, data)) {
-            std::lock_guard l(queueMutex);
+            glock l(queueMutex);
             if (!reduce(name, syncId, sourcePeerIndex, data)) {
               log.debug("adding to queue\n");
               queue.emplace_back();
@@ -739,10 +747,11 @@ struct AllReduceService {
         }
       }
 
-      {
+      // we can deadlock depending on user code (mutexes) if we don't dispatch this to another thread
+      rpc::scheduler.run([this, me = rpc::makeMe(this)]{
         auto now = std::chrono::steady_clock::now();
         auto timeout = rpc->getTimeout();
-        glock l(queueMutex);
+        std::lock_guard l(queueMutex);
         log.debug("de-queue %d\n", queue.size());
         queue.erase(
             std::remove_if(
@@ -751,7 +760,7 @@ struct AllReduceService {
                   return reduce(v.name, v.syncId, v.sourcePeerIndex, v.data) || now >= v.timestamp + timeout;
                 }),
             queue.end());
-      }
+      });
     }
 
     return h;
