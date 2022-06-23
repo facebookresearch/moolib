@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "intrusive_list.h"
 #include "logging.h"
 #include "rpc.h"
 #include "tensor.h"
@@ -183,7 +184,12 @@ std::string sizesStr(T&& sizes) {
     if (s.size() > 1) {
       s += ", ";
     }
-    s += std::to_string(v);
+    using UT = std::decay_t<decltype(v)>;
+    if constexpr (std::is_integral_v<UT> || std::is_floating_point_v<UT>) {
+      s += std::to_string(v);
+    } else {
+      s += sizesStr(v);
+    }
   }
   s += "}";
   return s;
@@ -195,6 +201,13 @@ struct Dtor {
   Dtor(T f) : f(std::move(f)) {}
   ~Dtor() {
     f();
+  }
+};
+
+struct Identity {
+  template<typename T>
+  constexpr T&& operator()(T&& v) {
+    return std::forward<T>(v);
   }
 };
 

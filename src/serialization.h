@@ -269,6 +269,10 @@ struct Serialize {
     ((*this)(std::forward<const T&>(v)), ...);
   }
 
+  void write(const void* data, size_t len) {
+    dst = Serializer{}.write(Op{}, dst, (std::byte*)data, len);
+  }
+
   void addTensor(OpWrite, const Tensor& x, size_t offset) {
     new (tensors++) TensorRef{x};
     new (tensorOffsets++) size_t(offset);
@@ -317,6 +321,12 @@ struct Deserialize {
   template<typename... T>
   void operator()(T&... v) {
     ((*this)(v), ...);
+  }
+
+  const char* consume(size_t n) {
+    const char* r = des.buf.data();
+    des.consume(n);
+    return r;
   }
 
   template<typename T>
@@ -380,11 +390,24 @@ void serializeToStringView(std::string_view buffer, const T&... v) {
 }
 
 template<typename... T>
+size_t serializeToUnchecked(void* ptr, const T&... v) {
+  std::byte* dst = (std::byte*)ptr;
+  Serialize<OpWrite> x{dst, dst, nullptr};
+  (x(v), ...);
+  return x.dst - (std::byte*)ptr;
+}
+
+template<typename... T>
 std::string_view deserializeBufferPart(const void* ptr, size_t len, T&... result) {
   Deserializer des(std::string_view{(const char*)ptr, len});
   Deserialize x(des);
   x(result...);
   return des.buf;
+}
+
+template<typename... T>
+std::string_view deserializeBufferPart(std::string_view data, T&... result) {
+  return deserializeBuffer(data.data(), data.size(), result...);
 }
 
 template<typename... T>
@@ -397,7 +420,11 @@ void deserializeBuffer(const void* ptr, size_t len, T&... result) {
   }
 }
 template<typename... T>
-auto deserializeBuffer(Buffer* buffer, T&... result) {
+void deserializeBuffer(std::string_view data, T&... result) {
+  deserializeBuffer(data.data(), data.size(), result...);
+}
+template<typename... T>
+void deserializeBuffer(Buffer* buffer, T&... result) {
   Deserializer des(std::string_view{(const char*)buffer->data(), buffer->size});
   Deserialize x(des);
   x.tensors = buffer->tensors();
@@ -406,6 +433,15 @@ auto deserializeBuffer(Buffer* buffer, T&... result) {
   if (des.buf.size() != 0) {
     throw SerializationError("deserializeBuffer: " + std::to_string(des.buf.size()) + " trailing bytes");
   }
+}
+
+template<typename... T>
+std::string_view deserializeBufferPart(Buffer* buffer, T&... result) {
+  Deserializer des(std::string_view{(const char*)buffer->data(), buffer->size});
+  Deserialize x(des);
+  x.tensors = buffer->tensors();
+  x.tensorsEnd = x.tensors + buffer->nTensors;
+  x(result...);
   return des.buf;
 }
 

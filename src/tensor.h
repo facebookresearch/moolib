@@ -11,7 +11,6 @@
 
 #include <optional>
 #include <string_view>
-#include <vector>
 
 namespace rpc {
 
@@ -30,6 +29,8 @@ struct Device {
   Device(DeviceType type, int index) : type(type), index(index) {}
   Device(std::string_view str);
 };
+
+struct CUDAStream;
 
 struct Tensor {
   moolib::Any<32> impl;
@@ -87,24 +88,28 @@ struct Tensor {
   Tensor grad() const;
   void set_grad(Tensor);
   Tensor& detach_();
+  Tensor detach() const;
   Tensor& zero_();
   Tensor& mul_(float n);
   Tensor& add_(const Tensor&);
+  Tensor to(Device device, bool non_blocking = false, bool copy = false) const;
+  bool requires_grad() const;
   int64_t numel() const;
   Tensor select(int64_t dim, int64_t index) const;
   Tensor narrow(int64_t dim, int64_t start, int64_t length) const;
-
-  Tensor view(IntArrayRef sizes) const;
-
+  Tensor flatten(int64_t start_dim = 0, int64_t end_dim = -1) const;
+  Tensor view_as(const Tensor& n) const;
+  Tensor clone() const;
+  Tensor view(IntArrayRef) const;
+  Tensor view(const std::vector<int64_t>&) const;
   Tensor squeeze(int64_t dim) const;
   Tensor& squeeze_(int64_t dim);
-
   Tensor unsqueeze(int64_t dim) const;
   Tensor& unsqueeze_(int64_t dim);
 
-  Tensor to(Device device, bool non_blocking = false, bool copy = false) const;
+  Tensor operator*(const Tensor& n) const;
 
-  bool requires_grad() const;
+  // void record_stream(CUDAStream);
 
   Tensor operator[](size_t index);
 };
@@ -114,6 +119,7 @@ struct Allocator {
   Allocator();
   Allocator(Device device, size_t bytes);
   Allocator(Allocator&&);
+  Allocator(void* ptr, size_t bytes, Device device, void* context, void (*deleter)(void*));
   std::byte* data() const;
   size_t size() const;
   Tensor set(int dtype, IntArrayRef sizes, IntArrayRef strides);
@@ -129,10 +135,10 @@ Tensor empty(IntArrayRef sizes, int dtype, Device d);
 Tensor from_blob(int dtype, IntArrayRef sizes, void* data);
 Tensor& min_out(Tensor& out, const Tensor&, const Tensor&);
 Tensor& max_out(Tensor& out, const Tensor&, const Tensor&);
-
 Tensor cat(const std::vector<Tensor>& tensors, int64_t dim);
 Tensor stack(const std::vector<Tensor>& tensors, int64_t dim);
 std::vector<Tensor> unbind(const Tensor& input, int64_t dim);
+Tensor cat(const std::vector<Tensor>& list, int64_t dim = 0);
 
 struct AutoGradMode {
   moolib::Any<8> impl;
@@ -162,15 +168,31 @@ struct CUDAStream {
   CUDAStream(std::nullptr_t);
   CUDAStream(const CUDAStream&);
   ~CUDAStream();
+  CUDAStream& operator=(const CUDAStream&);
   void synchronize();
+  void* nativeHandle();
+  int deviceIndex();
 };
 
 struct CUDAStreamGuard {
-  moolib::Any<16> impl;
+  moolib::Any<64> impl;
   CUDAStreamGuard(const CUDAStream&);
   ~CUDAStreamGuard();
 };
 
 CUDAStream getCurrentCUDAStream(int device_index = -1);
+CUDAStream getStreamFromPool(bool highPriority = false, int device_index = -1);
+
+struct CUDAEvent {
+  moolib::Any<16> impl;
+  CUDAEvent();
+  CUDAEvent(std::nullptr_t);
+  CUDAEvent(CUDAEvent&&);
+  ~CUDAEvent();
+  CUDAEvent& operator=(CUDAEvent&&);
+  void record(const CUDAStream&);
+  void block(const CUDAStream&);
+  void synchronize() const;
+};
 
 } // namespace rpc

@@ -10,6 +10,7 @@
 #include <torch/torch.h>
 
 #ifdef USE_CUDA
+#include <ATen/cuda/CUDAEvent.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
@@ -190,6 +191,7 @@ void Tensor::set_grad(Tensor v) {
   rpc::mutable_grad(t) = v.t;
 }
 w0v(detach_);
+w0c(detach, Tensor);
 w0v(zero_);
 w1v(mul_, float);
 w1v(add_, const Tensor&);
@@ -198,14 +200,19 @@ w0c(requires_grad, bool);
 w0c(numel, int64_t);
 w2c(select, Tensor, int64_t, int64_t);
 w3c(narrow, Tensor, int64_t, int64_t, int64_t);
-
+w2c(flatten, Tensor, int64_t, int64_t);
+w1c(view_as, Tensor, const Tensor&);
+w0c(clone, Tensor);
 w1c(view, Tensor, IntArrayRef);
-
+w1c(view, Tensor, const std::vector<int64_t>&);
 w1c(squeeze, Tensor, int64_t);
 w1v(squeeze_, int64_t);
-
 w1c(unsqueeze, Tensor, int64_t);
 w1v(unsqueeze_, int64_t);
+
+// void Tensor::record_stream(CUDAStream stream) {
+//  t.record_stream(stream.impl.as<c10::cuda::CUDAStream>());
+//}
 
 Tensor& Tensor::operator+=(const Tensor& n) {
   t += n.t;
@@ -214,6 +221,10 @@ Tensor& Tensor::operator+=(const Tensor& n) {
 Tensor& Tensor::operator*=(const Tensor& n) {
   t *= n.t;
   return *this;
+}
+
+Tensor Tensor::operator*(const Tensor& n) const {
+  return cast(t * n.t);
 }
 
 Tensor Tensor::operator[](size_t index) {
@@ -299,6 +310,12 @@ Allocator::Allocator(Allocator&& n) {
   impl.emplace<AllocationType>(std::move(n.impl.as<AllocationType>()));
 }
 
+Allocator::Allocator(void* ptr, size_t bytes, Device device, void* context, void (*deleter)(void*)) {
+  AllocationType& ac = impl.emplace<AllocationType>();
+  ac.data = torch::DataPtr(ptr, context, deleter, cast(device));
+  ac.bytes = bytes;
+}
+
 std::byte* Allocator::data() const {
   return (std::byte*)impl.as<AllocationType>().data.get();
 }
@@ -331,15 +348,32 @@ CUDAStream::CUDAStream(std::nullptr_t) {}
 CUDAStream::CUDAStream(const CUDAStream& n) {
   impl.emplace<c10::cuda::CUDAStream>(n.impl.as<c10::cuda::CUDAStream>());
 }
-CUDAStream::~CUDAStream() {}
+CUDAStream::~CUDAStream() {
+  impl.destroy<c10::cuda::CUDAStream>();
+}
+
+CUDAStream& CUDAStream::operator=(const CUDAStream& n) {
+  impl.as<c10::cuda::CUDAStream>() = n.impl.as<c10::cuda::CUDAStream>();
+  return *this;
+}
 void CUDAStream::synchronize() {
   impl.as<c10::cuda::CUDAStream>().synchronize();
+}
+
+void* CUDAStream::nativeHandle() {
+  return impl.as<c10::cuda::CUDAStream>().stream();
+}
+
+int CUDAStream::deviceIndex() {
+  return impl.as<c10::cuda::CUDAStream>().device_index();
 }
 
 CUDAStreamGuard::CUDAStreamGuard(const CUDAStream& n) {
   impl.emplace<c10::cuda::CUDAStreamGuard>(n.impl.as<c10::cuda::CUDAStream>());
 }
-CUDAStreamGuard::~CUDAStreamGuard() {}
+CUDAStreamGuard::~CUDAStreamGuard() {
+  impl.destroy<c10::cuda::CUDAStreamGuard>();
+}
 
 CUDAStream getCurrentCUDAStream(int device_index) {
   CUDAStream r(nullptr);
@@ -347,24 +381,79 @@ CUDAStream getCurrentCUDAStream(int device_index) {
   return r;
 }
 
+CUDAStream getStreamFromPool(bool highPriority, int device_index) {
+  CUDAStream r(nullptr);
+  r.impl.emplace<c10::cuda::CUDAStream>(c10::cuda::getStreamFromPool(highPriority, device_index));
+  return r;
+}
+
+CUDAEvent::CUDAEvent() {
+  impl.emplace<at::cuda::CUDAEvent>();
+}
+CUDAEvent::CUDAEvent(std::nullptr_t) {}
+CUDAEvent::CUDAEvent(CUDAEvent&& n) {
+  impl.emplace<at::cuda::CUDAEvent>(std::move(n.impl.as<at::cuda::CUDAEvent>()));
+}
+CUDAEvent::~CUDAEvent() {
+  impl.destroy<at::cuda::CUDAEvent>();
+}
+CUDAEvent& CUDAEvent::operator=(CUDAEvent&& n) {
+  impl.as<at::cuda::CUDAEvent>() = std::move(n.impl.as<at::cuda::CUDAEvent>());
+  return *this;
+}
+
+void CUDAEvent::record(const CUDAStream& stream) {
+  impl.as<at::cuda::CUDAEvent>().record(stream.impl.as<c10::cuda::CUDAStream>());
+}
+void CUDAEvent::block(const CUDAStream& stream) {
+  impl.as<at::cuda::CUDAEvent>().block(stream.impl.as<c10::cuda::CUDAStream>());
+}
+void CUDAEvent::synchronize() const {
+  impl.as<at::cuda::CUDAEvent>().synchronize();
+}
+
 #else
 
 bool CudaSupported() {
-  return false;
+  return true;
 }
 
 CUDAStream::CUDAStream(std::nullptr_t) {}
-CUDAStream::CUDAStream(const CUDAStream& n) {}
+CUDAStream::CUDAStream(const CUDAStream&) {}
 CUDAStream::~CUDAStream() {}
 
-CUDAStreamGuard::CUDAStreamGuard(const CUDAStream& n) {}
+void CUDAStream::synchronize() {}
+void* CUDAStream::nativeHandle() {
+  return nullptr;
+}
+int CUDAStream::deviceIndex() {
+  return 0;
+}
+CUDAStream& CUDAStream::operator=(const CUDAStream&) {
+  return *this;
+}
+
+CUDAStreamGuard::CUDAStreamGuard(const CUDAStream&) {}
 CUDAStreamGuard::~CUDAStreamGuard() {}
 
-CUDAStream getCurrentCUDAStream(int device_index) {
+CUDAStream getCurrentCUDAStream(int) {
+  return {nullptr};
+}
+CUDAStream getStreamFromPool(bool, int) {
   return {nullptr};
 }
 
-void CUDAStream::synchronize() {}
+CUDAEvent::CUDAEvent() {}
+CUDAEvent::CUDAEvent(std::nullptr_t) {}
+CUDAEvent::CUDAEvent(CUDAEvent&&) {}
+CUDAEvent::~CUDAEvent() {}
+CUDAEvent& CUDAEvent::operator=(CUDAEvent&&) {
+  return *this;
+}
+
+void CUDAEvent::record(const CUDAStream&) {}
+void CUDAEvent::block(const CUDAStream&) {}
+void CUDAEvent::synchronize() const {}
 
 #endif
 
