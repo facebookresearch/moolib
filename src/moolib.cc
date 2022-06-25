@@ -53,8 +53,8 @@ struct PyThreadKeepAlive {
   }
   ~PyThreadKeepAlive() {
     if (tstate && --tstate->gilstate_counter == 0) {
-      PyThreadState_Clear(tstate);
       if (!_Py_IsFinalizing()) {
+        PyThreadState_Clear(tstate);
         PyThreadState_Delete(tstate);
       }
     }
