@@ -32,7 +32,7 @@ async::SchedulerFifo scheduler;
 
 std::mutex logMutex;
 
-constexpr bool loggingEnabled = false;
+constexpr bool logLevel = 0;
 
 template<typename... Args>
 void logimpl(const char* fmt, Args&&... args) {
@@ -55,10 +55,15 @@ void logimpl(const char* fmt, Args&&... args) {
 }
 
 template<typename... Args>
-void log(const char* fmt, Args&&... args) {
-  if (loggingEnabled) {
+void log(int level, const char* fmt, Args&&... args) {
+  if (level <= logLevel) {
     logimpl(fmt, std::forward<Args>(args)...);
   }
+}
+
+template<typename... Args>
+void log(const char* fmt, Args&&... args) {
+  log(10, fmt, std::forward<Args>(args)...);
 }
 
 template<typename... Args>
@@ -2633,11 +2638,16 @@ struct Rpc::Impl {
   }
 
   template<typename... Args>
-  void log(const char* fmt, Args&&... args) {
-    if (loggingEnabled) {
+  void log(int level, const char* fmt, Args&&... args) {
+    if (level <= logLevel) {
       auto s = fmt::sprintf(fmt, std::forward<Args>(args)...);
-      rpc::log("%s: %s", myName, s);
+      rpc::log(level, "%s: %s", myName, s);
     }
+  }
+
+  template<typename... Args>
+  void log(const char* fmt, Args&&... args) {
+    log(10, fmt, std::forward<Args>(args)...);
   }
 
   void cleanup(Rpc::Impl::Incoming& o, Deferrer& defer) {
