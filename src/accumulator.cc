@@ -792,9 +792,9 @@ struct AccumulatorImpl {
       throw std::runtime_error("Model buffers size mismatch in update!");
     }
 
-    //    for (size_t i = 0; i != h->modelBuffers.size(); ++i) {
-    //      h->modelBuffers[i].copy_(h->newBuffers[i], true);
-    //    }
+    for (size_t i = 0; i != h->modelBuffers.size(); ++i) {
+      h->modelBuffers[i].copy_(h->newBuffers[i], true);
+    }
   }
 
   void commitModelUpdate() {
@@ -812,12 +812,12 @@ struct AccumulatorImpl {
       throw std::runtime_error("Model parameters size mismatch in update!");
     }
 
-    //    for (size_t i = 0; i != h->modelParameters.size(); ++i) {
-    //      h->modelParameters[i].copy_(h->newParameters[i], true);
-    //    }
-    //    for (size_t i = 0; i != h->modelBuffers.size(); ++i) {
-    //      h->modelBuffers[i].copy_(h->newBuffers[i], true);
-    //    }
+    for (size_t i = 0; i != h->modelParameters.size(); ++i) {
+      h->modelParameters[i].copy_(h->newParameters[i], true);
+    }
+    for (size_t i = 0; i != h->modelBuffers.size(); ++i) {
+      h->modelBuffers[i].copy_(h->newBuffers[i], true);
+    }
 
     py::gil_scoped_acquire gil;
     userState_ = std::move(h->newUserState);
