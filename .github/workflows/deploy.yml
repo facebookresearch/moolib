@@ -14,6 +14,7 @@ jobs:
   test_sdist:
     name: Test sdist on MacOS w/ Py3.8
     runs-on: macos-latest
+    when: manual
     steps:
     - name: Setup Python 3.8 env
       uses: actions/setup-python@v2
