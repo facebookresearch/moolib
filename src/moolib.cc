@@ -12,7 +12,6 @@
 #include "group.h"
 #include "logging.h"
 #include "pythonserialization.h"
-#include "rpc.h"
 #include "shm.h"
 #include "synchronization.h"
 #include "util.h"
@@ -21,6 +20,8 @@
 #include "pybind11/numpy.h"
 #include "pybind11/pybind11.h"
 #include "pybind11/stl.h"
+
+#include "rpc.h"
 
 #include <list>
 #include <vector>
@@ -52,8 +53,8 @@ struct PyThreadKeepAlive {
   }
   ~PyThreadKeepAlive() {
     if (tstate && --tstate->gilstate_counter == 0) {
-      PyThreadState_Clear(tstate);
       if (!_Py_IsFinalizing()) {
+        PyThreadState_Clear(tstate);
         PyThreadState_Delete(tstate);
       }
     }
@@ -308,65 +309,68 @@ struct FutureWrapper {
     py::object loop = moduleState->get_running_loop();
     py::object future = loop.attr("create_future")();
 
-    callback = rpc::Function<void()>([me = shared(), loop = GilWrapper<py::object>(std::move(loop)),
-                                      future = GilWrapper<py::object>(future)]() mutable noexcept {
-                 int f = me->flags.load(std::memory_order_relaxed);
-                 py::gil_scoped_acquire gil;
-                 if (_Py_IsFinalizing()) {
-                   return;
-                 }
-                 try {
-                   keepThreadAlive();
-                   if (f & 1) {
-                     loop->attr("call_soon_threadsafe")(
-                         py::cpp_function([me = std::move(me), future = std::move(future)]() mutable {
-                           try {
-                             if (!me->value) {
-                               future->attr("set_exception")(py::reinterpret_borrow<py::object>(PyExc_RuntimeError)(
-                                   "Future value not available. Maybe it has already been retrieved"));
-                             } else {
-                               future->attr("set_result")(me->value.release());
-                             }
-                           } catch (const py::error_already_set& e) {
-                             // InvalidStateError probably means that the future was cancelled
-                             if (!e.matches(py::module::import("asyncio").attr("InvalidStateError"))) {
-                               throw;
-                             }
-                           }
-                         }));
-                   } else if (f & 2) {
-                     try {
-                       loop->attr("call_soon_threadsafe")(py::cpp_function([me, future = std::move(future)]() mutable {
-                         try {
-                           std::lock_guard l(me->errorMutex);
-                           future->attr("set_exception")(
-                               py::reinterpret_borrow<py::object>(PyExc_RuntimeError)(me->error->what()));
-                         } catch (const py::error_already_set& e) {
-                           if (!e.matches(py::module::import("asyncio").attr("InvalidStateError"))) {
-                             throw;
-                           }
-                         }
-                       }));
-                     } catch (const py::error_already_set& e) {
-                       std::string s;
-                       {
-                         std::lock_guard l(me->errorMutex);
-                         s = me->error->what();
-                       }
-                       fatal("Python exception during callback: %s\nOriginal exception: %s", e.what(), s);
-                     }
-                   } else if (f & 4) {
-                     loop->attr("call_soon_threadsafe")(
-                         py::cpp_function([future = std::move(future)]() mutable { future->attr("cancel")(); }));
-                   } else {
-                     fatal("Future callback called in invalid state");
-                   }
-                 } catch (const py::error_already_set& e) {
-                   fatal("Python exception during callback: %s", e.what());
-                 }
-                 future.reset();
-                 loop.reset();
-               }).release();
+    py::object call_soon_threadsafe = loop.attr("call_soon_threadsafe");
+
+    callback =
+        rpc::Function<void()>([me = shared(),
+                               call_soon_threadsafe = GilWrapper<py::object>(std::move(call_soon_threadsafe)),
+                               future = GilWrapper<py::object>(future)]() mutable noexcept {
+          int f = me->flags.load(std::memory_order_relaxed);
+          py::gil_scoped_acquire gil;
+          if (_Py_IsFinalizing()) {
+            return;
+          }
+          try {
+            keepThreadAlive();
+            if (f & 1) {
+              (*call_soon_threadsafe)(py::cpp_function([me = std::move(me), future = std::move(future)]() mutable {
+                try {
+                  if (!me->value) {
+                    future->attr("set_exception")(py::reinterpret_borrow<py::object>(PyExc_RuntimeError)(
+                        "Future value not available. Maybe it has already been retrieved"));
+                  } else {
+                    future->attr("set_result")(me->value.release());
+                  }
+                } catch (const py::error_already_set& e) {
+                  // InvalidStateError probably means that the future was cancelled
+                  if (!e.matches(py::module::import("asyncio").attr("InvalidStateError"))) {
+                    throw;
+                  }
+                }
+              }));
+            } else if (f & 2) {
+              try {
+                (*call_soon_threadsafe)(py::cpp_function([me, future = std::move(future)]() mutable {
+                  try {
+                    std::lock_guard l(me->errorMutex);
+                    future->attr("set_exception")(
+                        py::reinterpret_borrow<py::object>(PyExc_RuntimeError)(me->error->what()));
+                  } catch (const py::error_already_set& e) {
+                    if (!e.matches(py::module::import("asyncio").attr("InvalidStateError"))) {
+                      throw;
+                    }
+                  }
+                }));
+              } catch (const py::error_already_set& e) {
+                std::string s;
+                {
+                  std::lock_guard l(me->errorMutex);
+                  s = me->error->what();
+                }
+                fatal("Python exception during callback: %s\nOriginal exception: %s", e.what(), s);
+              }
+            } else if (f & 4) {
+              (*call_soon_threadsafe)(
+                  py::cpp_function([future = std::move(future)]() mutable { future->attr("cancel")(); }));
+            } else {
+              fatal("Future callback called in invalid state");
+            }
+          } catch (const py::error_already_set& e) {
+            fatal("Python exception during callback: %s", e.what());
+          }
+          future.reset();
+          call_soon_threadsafe.reset();
+        }).release();
     if (flags.load() != 0) {
       doCallback();
     }
@@ -406,7 +410,7 @@ struct Promise {
 };
 
 struct QueueEntry {
-  rpc::RpcDeferredReturn<GilWrapper<py::object>> ret;
+  rpc::Function<void(GilWrapper<py::object>)> ret;
   std::optional<GilWrapper<py::args>> args;
   std::optional<GilWrapper<py::kwargs>> kwargs;
   std::chrono::steady_clock::time_point timestamp;
@@ -423,7 +427,7 @@ struct QueueWrapper {
   std::deque<Promise<FutureWrapper>> waiters;
 
   void setResult(
-      Promise<FutureWrapper>& promise, rpc::RpcDeferredReturn<GilWrapper<py::object>>&& ret,
+      Promise<FutureWrapper>& promise, rpc::Function<void(GilWrapper<py::object>)>&& ret,
       std::optional<GilWrapper<py::args>>&& args, std::optional<GilWrapper<py::kwargs>>&& kwargs) {
     py::object o;
     {
@@ -441,11 +445,8 @@ struct QueueWrapper {
     promise.setResult(std::move(o));
   }
 
-  void setBatchResult(
-      std::vector<std::tuple<
-          rpc::RpcDeferredReturn<GilWrapper<py::object>>, std::optional<GilWrapper<py::args>>,
-          std::optional<GilWrapper<py::kwargs>>>>&& batch,
-      Promise<FutureWrapper>& result) const {
+  template<typename Batch>
+  void setBatchResult(Batch&& batch, Promise<FutureWrapper>& result) const {
     py::object o;
     {
       py::gil_scoped_acquire gil;
@@ -456,7 +457,7 @@ struct QueueWrapper {
       const int64_t curBatchSize = batch.size();
       // Somehow std::vector<py::handle> doesn't work here.
       py::tuple src(curBatchSize);
-      std::vector<rpc::RpcDeferredReturn<GilWrapper<py::object>>> retCallbacks;
+      std::vector<rpc::Function<void(GilWrapper<py::object>)>> retCallbacks;
       retCallbacks.reserve(curBatchSize);
       for (int64_t i = 0; i < curBatchSize; ++i) {
         auto& [ret, args, kwargs] = batch[i];
@@ -466,9 +467,9 @@ struct QueueWrapper {
             kwargs ? (py::object)*std::move(*kwargs) : (py::object)py::none());
       }
 
-      rpc::RpcDeferredReturn<GilWrapper<py::object>> retCallback;
-      retCallback.f = [curBatchSize, dim = batchDim,
-                       retCallbacks = std::move(retCallbacks)](GilWrapper<py::object> input) mutable {
+      rpc::Function<void(GilWrapper<py::object>)> retCallback;
+      retCallback = [curBatchSize, dim = batchDim,
+                     retCallbacks = std::move(retCallbacks)](GilWrapper<py::object> input) mutable {
         if (input->is_none()) {
           for (auto& retCallback : retCallbacks) {
             retCallback(py::none());
@@ -482,14 +483,13 @@ struct QueueWrapper {
         }
       };
       py::tuple args = py::reinterpret_borrow<py::tuple>(utils::stackFields(src, batchDim));
-      o = py::make_tuple(
-          py::cast(std::move(retCallback), py::return_value_policy::move), std::move(args[0]), std::move(args[1]));
+      o = py::make_tuple(py::cast(std::move(retCallback), py::return_value_policy::move), args[0], args[1]);
     }
     result.setResult(std::move(o));
   }
 
   void enqueue(
-      rpc::RpcDeferredReturn<GilWrapper<py::object>> ret, std::optional<GilWrapper<py::args>> args,
+      rpc::Function<void(GilWrapper<py::object>)> ret, std::optional<GilWrapper<py::args>> args,
       std::optional<GilWrapper<py::kwargs>> kwargs) {
     {
       std::unique_lock l(mutex);
@@ -503,10 +503,13 @@ struct QueueWrapper {
         waiters.pop_front();
         l.unlock();
         if (batchSize > 0) {
-          std::vector<std::tuple<
-              rpc::RpcDeferredReturn<GilWrapper<py::object>>, std::optional<GilWrapper<py::args>>,
-              std::optional<GilWrapper<py::kwargs>>>>
-              batch = {std::make_tuple(std::move(ret), std::move(args), std::move(kwargs))};
+          std::array<
+              std::tuple<
+                  rpc::Function<void(GilWrapper<py::object>)>, std::optional<GilWrapper<py::args>>,
+                  std::optional<GilWrapper<py::kwargs>>>,
+              1>
+              batch;
+          batch[0] = std::make_tuple(std::move(ret), std::move(args), std::move(kwargs));
           setBatchResult(std::move(batch), promise);
         } else {
           setResult(promise, std::move(ret), std::move(args), std::move(kwargs));
@@ -533,7 +536,7 @@ struct QueueWrapper {
           const int64_t queSize = queue.size();
           const int64_t curBatchSize = std::min(batchSize, queSize);
           std::vector<std::tuple<
-              rpc::RpcDeferredReturn<GilWrapper<py::object>>, std::optional<GilWrapper<py::args>>,
+              rpc::Function<void(GilWrapper<py::object>)>, std::optional<GilWrapper<py::args>>,
               std::optional<GilWrapper<py::kwargs>>>>
               batch;
           batch.reserve(curBatchSize);
@@ -650,13 +653,13 @@ struct Batcher {
         }
         n -= offset;
         if (n <= batchSize && offset == 0) {
-          tensor.narrow(batchDimension, 0, n).copy_(*t);
+          tensor.narrow(batchDimension, 0, n).copy_(*t, true);
         } else {
           n = std::min(n, batchSize);
-          tensor.narrow(batchDimension, 0, n).copy_(t->narrow(batchDimension, offset, n));
+          tensor.narrow(batchDimension, 0, n).copy_(t->narrow(batchDimension, offset, n), true);
         }
       } else {
-        tensor.select(batchDimension, 0).copy_(*t);
+        tensor.select(batchDimension, 0).copy_(*t, true);
       }
       ++nTensors;
       return rpc::toPython(tensor);
@@ -725,13 +728,13 @@ struct Batcher {
         int64_t left = batchSize - outputOffset;
         n -= inputOffset;
         if (n <= left && inputOffset == 0) {
-          destT->narrow(batchDimension, outputOffset, n).copy_(*sourceT);
+          destT->narrow(batchDimension, outputOffset, n).copy_(*sourceT, true);
         } else {
           n = std::min(n, left);
-          destT->narrow(batchDimension, outputOffset, n).copy_(sourceT->narrow(batchDimension, inputOffset, n));
+          destT->narrow(batchDimension, outputOffset, n).copy_(sourceT->narrow(batchDimension, inputOffset, n), true);
         }
       } else {
-        destT->select(batchDimension, nextStackIndex).copy_(*sourceT);
+        destT->select(batchDimension, nextStackIndex).copy_(*sourceT, true);
       }
       ++currentTensor;
     } else if (py::isinstance<py::tuple>(dest)) {
@@ -827,49 +830,47 @@ struct Batcher {
     return {};
   }
 
-  void prepareForUnbatch(const py::handle& v, std::vector<std::pair<py::object, rpc::Tensor>>& tensors) {
+  template<typename F>
+  py::object prepareForUnbatchCopy(const py::handle& v, F&& f) {
     if (py::isinstance<py::dict>(v)) {
       const py::dict& dict = py::reinterpret_borrow<py::dict>(v);
+      py::dict newdict;
       for (auto& [key, value] : dict) {
-        prepareForUnbatch(value, tensors);
+        newdict[key] = prepareForUnbatchCopy(value, f);
       }
+      return std::move(newdict);
     } else if (py::isinstance<py::list>(v)) {
       const py::list& list = py::reinterpret_borrow<py::list>(v);
       size_t n = list.size();
+      py::list newlist(n);
       for (size_t i = 0; i != n; ++i) {
-        prepareForUnbatch(list[i], tensors);
+        newlist[i] = prepareForUnbatchCopy(list[i], f);
       }
+      return std::move(newlist);
     } else if (auto t = rpc::tryFromPython(v)) {
-      tensors.emplace_back(py::reinterpret_borrow<py::object>(v), t->to(rpc::kCPU));
+      return f(v, *t);
     } else if (py::isinstance<py::tuple>(v)) {
       const py::tuple& tuple = py::reinterpret_borrow<py::tuple>(v);
       size_t n = tuple.size();
+      py::tuple newtuple(n);
       for (size_t i = 0; i != n; ++i) {
-        prepareForUnbatch(tuple[i], tensors);
+        newtuple[i] = prepareForUnbatchCopy(tuple[i], f);
       }
+      return std::move(newtuple);
+    } else {
+      return py::reinterpret_borrow<py::object>(v);
     }
   }
-
-  std::vector<std::pair<py::object, rpc::Tensor>> unbatchTensors;
 
   template<typename T>
   void unbatch(py::object v, T&& callbacks) {
     std::lock_guard l(*unbatchMutex);
-    auto& tensors = unbatchTensors;
-    prepareForUnbatch(v, tensors);
+    v = prepareForUnbatchCopy(v, [&](auto&, rpc::Tensor& t) { return rpc::toPython(t.cpu()); });
     size_t n = callbacks.size();
     for (size_t i = 0; i != n; ++i) {
-      for (auto& [o, t] : tensors) {
-        if (t.size(0) != (int64_t)n) {
-          throw std::runtime_error(
-              fmt::sprintf("unexpected batch size in output tensor: got %d, expected %d", t.size(0), n));
-        }
-        setPythonTensor(o, t[i]);
-      }
-      callbacks[i](v);
+      auto iv = prepareForUnbatchCopy(v, [&](auto&, rpc::Tensor& t) { return rpc::toPython(t[i]); });
+      callbacks[i](iv);
     }
-
-    unbatchTensors.clear();
   }
 };
 
@@ -986,9 +987,13 @@ struct RpcWrapper {
     rpc->connect(addr);
   }
 
+  void undefine(std::string_view name) {
+    rpc->undefine(name);
+  }
+
   void define(std::string_view name, py::function callback, py::kwargs kwargs) {
     if (kwargs.contains("batch_size") && kwargs["batch_size"].ptr() != Py_None) {
-      using MyBatcher = Batcher<rpc::RpcDeferredReturn<GilWrapper<py::object>>>;
+      using MyBatcher = Batcher<rpc::Function<void(GilWrapper<py::object>)>>;
       MyBatcher batcher;
       int batchSize = py::cast<int>(kwargs["batch_size"]);
       if (kwargs.contains("device")) {
@@ -1037,7 +1042,7 @@ struct RpcWrapper {
 
   void defineDeferred(std::string_view name, py::function callback, py::kwargs kwargs) {
     if (kwargs.contains("batch_size") && kwargs["batch_size"].ptr() != Py_None) {
-      using MyBatcher = Batcher<rpc::RpcDeferredReturn<GilWrapper<py::object>>>;
+      using MyBatcher = Batcher<rpc::Function<void(GilWrapper<py::object>)>>;
       std::shared_ptr<MyBatcher> batcher;
       int batchSize = py::cast<int>(kwargs["batch_size"]);
       if (kwargs.contains("device")) {
@@ -1106,7 +1111,7 @@ struct RpcWrapper {
               q->enqueue(std::move(returnCallback), std::move(args), std::move(kwargs));
             });
       } else {
-        using MyBatcher = Batcher<rpc::RpcDeferredReturn<GilWrapper<py::object>>>;
+        using MyBatcher = Batcher<rpc::Function<void(GilWrapper<py::object>)>>;
         std::shared_ptr<MyBatcher> batcher;
         if (kwargs.contains("device")) {
           std::string device = py::cast<std::string>(kwargs["device"]);
@@ -1126,8 +1131,8 @@ struct RpcWrapper {
               auto retval = batcher->stack(getBatchValue(args, kwargs), std::move(returnCallback));
               if (retval) {
                 py::object o = std::move(retval->first);
-                rpc::RpcDeferredReturn<GilWrapper<py::object>> returnCallback2;
-                returnCallback2.f = [batcher, retval = std::move(retval)](GilWrapper<py::object> r) mutable {
+                rpc::Function<void(GilWrapper<py::object>)> returnCallback2;
+                returnCallback2 = [batcher, retval = std::move(retval)](GilWrapper<py::object> r) mutable {
                   batcher->unbatch(std::move(*r), retval->second);
                 };
                 applyArgs(args, kwargs, ApplyToQueue(*q), o, std::move(returnCallback2));
@@ -1331,6 +1336,24 @@ struct GroupWrapper : Group {
     throw std::runtime_error(
         "all_reduce can only use the default operator on Tensor data. Please specify an operator function");
   }
+
+  std::shared_ptr<AllReduceWrapper> synchronize(std::string name) {
+    GilWrapper<py::object> result = py::none();
+    py::gil_scoped_release gil;
+    Promise<AllReduceWrapper> promise;
+    auto future = promise.getFuture();
+    auto h = Group::allReduce(
+        "!sync-" + name, 0, [](auto&, auto&) {},
+        [promise = std::move(promise), result = std::move(result)](int* r, rpc::Error* error) mutable noexcept {
+          if (r) {
+            promise.setResult(std::move(result));
+          } else {
+            promise.setException(std::move(*error));
+          }
+        });
+    future->h = std::move(h);
+    return future;
+  }
 };
 
 struct EnvPoolWrapper {
@@ -1402,8 +1425,13 @@ struct BatcherWrapper {
   }
 
   bool empty() {
-    std::unique_lock l(mutex);
+    std::lock_guard l(mutex);
     return queue.empty();
+  }
+
+  size_t size() {
+    std::lock_guard l(mutex);
+    return queue.size();
   }
 
   py::object get() {
@@ -1431,6 +1459,14 @@ struct BatcherWrapper {
     batcher.cat(std::move(data), [this](py::object value) { enqueue(value); });
   }
 };
+
+void callRpcDeferredReturn(rpc::RpcDeferredReturn<GilWrapper<py::object>>& o, const py::object& v) {
+  o(v);
+}
+
+void callFunction(rpc::Function<void(GilWrapper<py::object>)>& o, const py::object& v) {
+  o(v);
+}
 
 void set_log_level(py::object level) {
   if (py::isinstance<py::str>(level)) {
@@ -1728,6 +1764,7 @@ PYBIND11_MODULE(_C, m) {
       )d"))
       .def("model_version", &Accumulator::modelVersion, py::doc(R"d(
         Return the current model version.
+
         This number is automatically incremented when ``zero_gradients`` is called.
         The peer with the highest model version will be selected as the leader.
 
@@ -1737,15 +1774,21 @@ PYBIND11_MODULE(_C, m) {
       .def("set_model_version", &Accumulator::setModelVersion, py::arg("n"), py::doc(R"d(
          Set the current model version.
 
-         The default value is:
+         This function should be called e.g. when a model is loaded from a checkpoint,
+         to inform Moolib of the real model version. In this case, it's best to do it before
+         calling ``Accumulator.update`` for the first time.
+
+         Calling this function will *not* trigger any synchronization, in particular the leader
+         will not change immediately, but may change later based on the set value if synchronization
+         occurs (e.g. when a peer joins or leaves).
 
          Args:
-             n (int): the virtual batch size.
+             n (int): the new model version.
        )d"))
       .def("set_virtual_batch_size", &Accumulator::setVirtualBatchSize, py::arg("n"), py::doc(R"d(
         Set the virtual batch size of the reduction operation.
 
-        The default value is:
+        The default value is: 1
 
         Args:
             n (int): the virtual batch size.
@@ -1753,7 +1796,12 @@ PYBIND11_MODULE(_C, m) {
       .def("set_parallel_gradients", &Accumulator::setParallelGradients, py::arg("n"), py::doc(R"d(
         Set the number of parallel gradient reduction operations.
 
-        The default value is:
+        If this value is set to >1, multiple sets of gradients may be accumulated simultaneously.
+        In this case, gradients may have been calculated using a previous model version (up to `n` versions ago).
+        This can allow using smaller virtual batch sizes, when many peers generate data quickly.
+        Gradients will always be applied (through ``has_gradients``) in the same order on all peers.
+
+        The default value is: 1
 
         Args:
             n (int): the number of parallel gradient operations.
@@ -1779,7 +1827,7 @@ PYBIND11_MODULE(_C, m) {
             (dict): statistics about the gradient syncing.
       )d"));
   py::class_<BatcherWrapper>(m, "Batcher", R"d(
-    A auxiliary class to asynchronously batch tensors into an chosen batch size on a certain device.
+    An auxiliary class to asynchronously batch tensors into an chosen batch size on a certain device.
 
     This class will often be used in an RL setting, see ``examples/impala/impala.py``, with batching
     happening in a background thread. This class is ``awaitable`` with asyncio.
@@ -1830,6 +1878,12 @@ PYBIND11_MODULE(_C, m) {
         Returns:
             bool:
       )d"))
+      .def("size", &BatcherWrapper::size, py::doc(R"d(
+        Returns the size of the batched queue of data.
+
+        Returns:
+            int:
+      )d"))
       .def("get", &BatcherWrapper::get, py::doc(R"d(
         Return a batched tensor.
 
@@ -1842,7 +1896,10 @@ PYBIND11_MODULE(_C, m) {
   py::class_<rpc::RpcDeferredReturn<GilWrapper<py::object>>>(m, "RpcDeferredReturn", R"d(
     A deferred return from call to a ``define_deferred`` function.
   )d")
-      .def("__call__", &rpc::RpcDeferredReturn<GilWrapper<py::object>>::operator()<const py::object&>);
+      .def("__call__", &callRpcDeferredReturn);
+  py::class_<rpc::Function<void(GilWrapper<py::object>)>>(m, "Function", R"d(
+  )d")
+      .def("__call__", &callFunction);
   py::class_<QueueWrapper, std::shared_ptr<QueueWrapper>>(m, "Queue", R"d(
     A tensorpipe Queue class.
   )d")
@@ -1951,6 +2008,14 @@ PYBIND11_MODULE(_C, m) {
             function (Callable[[], None]): a Python function, for peers to call.
             kwargs: specifications for how to treat Tensor arguments to the function.
       )d"))
+      .def("undefine", &RpcWrapper::undefine, py::arg("name"), py::doc(R"(
+        Undefine a previously defined function.
+
+        This function will block until all current calls to the function have completed.
+
+        Args:
+            name (str): a name corresponding to a previous call to ``define``.
+      )"))
       .def("define_deferred", &RpcWrapper::defineDeferred, py::doc(R"d(
         Define a deferred function to be available for peers to call.
 
@@ -2074,6 +2139,8 @@ PYBIND11_MODULE(_C, m) {
       .def("cancel", &FutureWrapper::cancel, py::doc(R"d(Cancel the future calculation.)d"))
       .def("done", &FutureWrapper::done, py::doc(R"d(Check if the future has finished.)d"))
       .def("exception", &FutureWrapper::exception, py::doc("Returns the exception that occurred, if any."))
+      .def("wait", (void (FutureWrapper::*)()) & FutureWrapper::wait)
+      .def("wait", (void (FutureWrapper::*)(float)) & FutureWrapper::wait)
       .def("__await__", &FutureWrapper::await)
       .def("__iter__", &FutureWrapper::await);
   py::class_<Broker>(m, "Broker", R"d(
@@ -2177,6 +2244,8 @@ PYBIND11_MODULE(_C, m) {
       .def("cancel", &AllReduceWrapper::cancel, py::doc(R"d(Cancel the future calculation.)d"))
       .def("done", &AllReduceWrapper::done, py::doc(R"d(Check if the future has finished.)d"))
       .def("exception", &AllReduceWrapper::exception, py::doc("Returns the exception that occurred, if any."))
+      .def("wait", (void (AllReduceWrapper::*)()) & AllReduceWrapper::wait)
+      .def("wait", (void (AllReduceWrapper::*)(float)) & AllReduceWrapper::wait)
       .def("__await__", &AllReduceWrapper::await)
       .def("__iter__", &AllReduceWrapper::await);
 }

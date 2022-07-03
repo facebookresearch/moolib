@@ -23,6 +23,7 @@ struct Any {
   void (*dtor)(Any*) = nullptr;
   template<typename T>
   constexpr bool embed() const noexcept {
+    // static_assert(sizeof(T) <= embeddedSize);
     return sizeof(T) <= embeddedSize;
   }
   Any() = default;
@@ -35,6 +36,9 @@ struct Any {
   }
   Any& operator=(const Any&) = delete;
   Any& operator=(Any&&) = delete;
+  operator bool() const noexcept {
+    return dtor != nullptr;
+  }
   template<typename T>
   T* pointer() const noexcept {
     return embed<T>() ? (T*)&buf : (T*&)buf;
@@ -62,13 +66,24 @@ struct Any {
       };
     } else {
       p = new T(std::forward<Args>(args)...);
-      (T*&)buf = p;
+      new ((T**)&buf) T*(p);
       dtor = [](Any* me) {
         delete me->pointer<T>();
         me->dtor = nullptr;
       };
     }
     return *p;
+  }
+  template<typename T>
+  void destroy() {
+    if (dtor) {
+      if (embed<T>()) {
+        as<T>().~T();
+      } else {
+        delete pointer<T>();
+      }
+      dtor = nullptr;
+    }
   }
 };
 

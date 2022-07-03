@@ -90,15 +90,16 @@ class TestMoolib:
 
         called = False
 
-        def client_hello(*args):
+        def client_hello(a, b, c):
             nonlocal called
             called = True
-            print("client got hello:", (*args,))
+            assert (a, b, c) == (1, 2, 3)
+            return (c, b, a)
 
         client.define("client hello", client_hello)
 
         def hello(message):
-            pass
+            return 42
 
         host.define("hello", hello)
         host.set_name("host")
@@ -123,12 +124,11 @@ class TestMoolib:
             client.sync("host", "hello", "is host dead?")
 
         host = moolib.Rpc()
+        host.define("hello", hello)
         host.set_name("host")
         host.listen(ADDRESS)
-        host.set_timeout(30)
 
-        # host does not connect to client, so this would normally not work
-        # but since client lost connection to host, it should reconnect automatically
-        # TODO: This call adds ~8 sec to the test.
-        host.sync("client", "client hello", "I", "am", "back!")
+        client.set_timeout(30)
+        assert client.sync("host", "hello", "is host alive?") == 42
+        assert host.sync("client", "client hello", 1, 2, 3) == (3, 2, 1)
         assert called

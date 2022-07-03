@@ -39,24 +39,33 @@ target_link_libraries(tensor PRIVATE ${TORCH_LIBRARIES})
 target_include_directories(tensor SYSTEM PRIVATE ${TORCH_INCLUDE_DIRS})
 target_compile_options(tensor PRIVATE ${TORCH_CXX_FLAGS})
 
-add_library(moorpc src/rpc.cc src/async.cc)
+add_library(moorpc OBJECT
+  src/rpc.cc
+  src/async.cc
+)
 target_link_libraries(moorpc PUBLIC tensor fmt tensorpipe)
 target_include_directories(moorpc PRIVATE src/tensorpipe src)
 
 if (USE_CUDA)
+  target_link_libraries(moorpc PUBLIC tensorpipe_cuda)
   target_compile_definitions(tensor PRIVATE -DUSE_CUDA)
   target_compile_definitions(moorpc PRIVATE -DUSE_CUDA)
 endif()
 
-pybind11_add_module(
-  _C
+pybind11_add_module(_C
+  $<TARGET_OBJECTS:moorpc>
   src/moolib.cc
   src/accumulator.cc
   src/batch_utils.cc
   src/env.cc
   src/tensorpython.cc
 )
-target_link_libraries(_C PRIVATE moorpc ${TorchPath}/lib/libtorch_python${CMAKE_SHARED_LIBRARY_SUFFIX})
+target_link_libraries(
+  _C
+  PRIVATE
+  $<TARGET_PROPERTY:moorpc,LINK_LIBRARIES>
+  ${TorchPath}/lib/libtorch_python${CMAKE_SHARED_LIBRARY_SUFFIX}
+)
 
 set_source_files_properties(src/tensorpython.cc PROPERTIES INCLUDE_DIRECTORIES "${TORCH_INCLUDE_DIRS}")
 set_source_files_properties(src/tensorpython.cc PROPERTIES COMPILE_FLAGS "${TORCH_CXX_FLAGS}")

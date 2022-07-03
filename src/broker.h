@@ -80,11 +80,18 @@ struct BrokerService {
   BrokerService(rpc::Rpc& rpc) : rpc(&rpc) {
     setup();
   }
-  ~BrokerService() {}
+  ~BrokerService() {
+    close();
+  }
 
   template<typename T, typename... Args>
   Future<T> call(std::string_view peerName, std::string_view funcName, Args&&... args) {
     return callImpl<T>(*rpc, peerName, funcName, std::forward<Args>(args)...);
+  }
+
+  void close() {
+    rpc->undefine("BrokerService::groupSize");
+    rpc->undefine("BrokerService::resync");
   }
 
   void setup() {

@@ -69,7 +69,7 @@ def main():
 
     setuptools.setup(
         name="moolib",
-        version="0.0.9",
+        version="0.1.0",
         description=("A library for distributed ML training with PyTorch"),
         long_description=long_description,
         long_description_content_type="text/markdown",
