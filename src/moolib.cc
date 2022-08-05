@@ -52,8 +52,8 @@ struct PyThreadKeepAlive {
     tstate = std::exchange(n.tstate, nullptr);
   }
   ~PyThreadKeepAlive() {
-    if (tstate && --tstate->gilstate_counter == 0) {
-      if (!_Py_IsFinalizing()) {
+    if (!_Py_IsFinalizing()) {
+      if (tstate && --tstate->gilstate_counter == 0) {
         PyThreadState_Clear(tstate);
         PyThreadState_Delete(tstate);
       }

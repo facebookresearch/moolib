@@ -9,6 +9,8 @@
 
 #include "intrusive_list.h"
 
+#include "transports/ipc.h"
+
 #include <tensorpipe/tensorpipe.h>
 
 #ifdef USE_CUDA
@@ -32,7 +34,7 @@ async::SchedulerFifo scheduler;
 
 std::mutex logMutex;
 
-constexpr bool logLevel = 0;
+constexpr int logLevel = 1;
 
 template<typename... Args>
 void logimpl(const char* fmt, Args&&... args) {
@@ -202,6 +204,44 @@ void reg(const char* name, F&& f) {
   }
 }
 
+std::pair<int, const char*> decodePort(std::string_view port) {
+  unsigned retval = 0;
+  const char* p = port.data();
+  const char* e = p + port.size();
+  while (p != e) {
+    char c = *p;
+    if (c < '0' || c > '9') {
+      break;
+    }
+    retval *= 10;
+    retval += c - '0';
+    ++p;
+  }
+  return {(int)retval, p};
+}
+
+static std::pair<std::string_view, int> decodeIpAddress(std::string_view address) {
+  std::string_view hostname = address;
+  int port = 0;
+  auto bpos = address.find('[');
+  if (bpos != std::string_view::npos) {
+    auto bepos = address.find(']', bpos);
+    if (bepos != std::string_view::npos) {
+      hostname = address.substr(bpos + 1, bepos - (bpos + 1));
+      address = address.substr(bepos + 1);
+    }
+  }
+  auto cpos = address.find(':');
+  if (cpos != std::string_view::npos) {
+    if (hostname == address) {
+      hostname = address.substr(0, cpos);
+    }
+    ++cpos;
+    std::tie(port, std::ignore) = decodePort(address.substr(cpos));
+  }
+  return {hostname, port};
+}
+
 struct TPSHMContext {
   tensorpipe::Context& context = [] {
     static tensorpipe::Context context = [] {
@@ -236,6 +276,7 @@ struct API_TPSHM {
 
   static constexpr bool addressIsIp = false;
   static constexpr bool supportsCuda = true;
+  static constexpr bool isTensorpipe = true;
 
   static std::vector<std::string> defaultAddr() {
     return {randomAddress()};
@@ -293,6 +334,7 @@ struct API_TPUV {
 
   static constexpr bool addressIsIp = true;
   static constexpr bool supportsCuda = false;
+  static constexpr bool isTensorpipe = true;
 
   static std::vector<std::string> defaultAddr() {
     return {"0.0.0.0", "::"};
@@ -356,6 +398,7 @@ struct API_TPIBV {
 
   static constexpr bool addressIsIp = true;
   static constexpr bool supportsCuda = true;
+  static constexpr bool isTensorpipe = true;
 
   static std::vector<std::string> defaultAddr() {
     return {"0.0.0.0", "::"};
@@ -385,6 +428,72 @@ struct API_TPIBV {
   }
 };
 
+struct API_IPC {
+  using Context = ipc::UnixContext;
+  using Connection = std::shared_ptr<ipc::Connection>;
+  using Listener = std::shared_ptr<ipc::Listener>;
+
+  static constexpr bool addressIsIp = false;
+  static constexpr bool supportsCuda = false;
+  static constexpr bool isTensorpipe = false;
+
+  static std::vector<std::string> defaultAddr() {
+    return {randomAddress()};
+  }
+  static std::string localAddr([[maybe_unused]] const Listener& listener, std::string addr) {
+    return addr;
+  }
+  static std::string localAddr([[maybe_unused]] const Connection&) {
+    return "";
+  }
+  static std::string remoteAddr([[maybe_unused]] const Connection&) {
+    return "";
+  }
+
+  static auto& cast(Connection& x) {
+    return *x;
+  }
+  static auto& cast(Listener& x) {
+    return *x;
+  }
+  static std::string errstr(const Error& err) {
+    return err.what();
+  }
+};
+
+struct API_TCP {
+  using Context = ipc::TcpContext;
+  using Connection = std::shared_ptr<ipc::Connection>;
+  using Listener = std::shared_ptr<ipc::Listener>;
+
+  static constexpr bool addressIsIp = true;
+  static constexpr bool supportsCuda = false;
+  static constexpr bool isTensorpipe = false;
+
+  static std::vector<std::string> defaultAddr() {
+    return {"0.0.0.0", "[::]"};
+  }
+  static std::string localAddr([[maybe_unused]] const Listener& listener, std::string addr) {
+    return listener->localAddress();
+  }
+  static std::string localAddr([[maybe_unused]] const Connection& connection) {
+    return connection->localAddress();
+  }
+  static std::string remoteAddr([[maybe_unused]] const Connection& connection) {
+    return connection->remoteAddress();
+  }
+
+  static auto& cast(Connection& x) {
+    return *x;
+  }
+  static auto& cast(Listener& x) {
+    return *x;
+  }
+  static std::string errstr(const Error& err) {
+    return err.what();
+  }
+};
+
 template<typename API>
 struct APIWrapper : API {
   template<typename T, typename X = API>
@@ -402,21 +511,19 @@ struct APIWrapper : API {
   }
 };
 
-enum class ConnectionType { uv, shm, ibv, count };
+enum class ConnectionType { uv, shm, ibv, ipc, tcp, count };
 static const std::array<const char*, (int)ConnectionType::count> connectionTypeName = {
-    "TCP/IP",
-    "Shared memory",
-    "InfiniBand",
+    "TCP/IP", "Shared memory", "InfiniBand", "IPC", "TCP",
 };
 static const std::array<const char*, (int)ConnectionType::count> connectionShortTypeName = {
-    "uv",
-    "shm",
-    "ibv",
+    "uv", "shm", "ibv", "ipc", "tcp",
 };
 static const std::array<bool, (int)ConnectionType::count> connectionDefaultEnabled = {
-    true, // uv
-    true, // shm
-    true, // ibv
+    false, // uv
+    false, // shm
+    false, // ibv
+    true,  // ipc
+    true,  // tcp
 };
 
 template<typename API>
@@ -433,6 +540,14 @@ template<>
 struct index_t<API_TPIBV> {
   static constexpr ConnectionType value = ConnectionType::ibv;
 };
+template<>
+struct index_t<API_IPC> {
+  static constexpr ConnectionType value = ConnectionType::ipc;
+};
+template<>
+struct index_t<API_TCP> {
+  static constexpr ConnectionType value = ConnectionType::tcp;
+};
 template<typename API>
 constexpr size_t index = (size_t)index_t<API>::value;
 
@@ -445,6 +560,10 @@ auto switchOnAPI(ConnectionType t, F&& f) {
     return f(API_TPSHM{});
   case ConnectionType::ibv:
     return f(API_TPIBV{});
+  case ConnectionType::ipc:
+    return f(API_IPC{});
+  case ConnectionType::tcp:
+    return f(API_TCP{});
   default:
     fatal("switchOnAPI bad index %d", (int)t);
   }
@@ -458,6 +577,10 @@ auto switchOnScheme(std::string_view str, F&& f) {
     return f(API_TPSHM{});
   } else if (str == "ibv") {
     return f(API_TPIBV{});
+  } else if (str == "ipc") {
+    return f(API_IPC{});
+  } else if (str == "tcp") {
+    return f(API_TCP{});
   } else {
     fatal("Unrecognized scheme '%s'", str);
   }
@@ -804,6 +927,8 @@ struct PeerImpl {
   }
 
   template<typename... Args>
+  void log(int, const char* fmt, Args&&... args);
+  template<typename... Args>
   void log(const char* fmt, Args&&... args);
 
   std::string_view rpcName();
@@ -836,7 +961,7 @@ struct PeerImpl {
           l.unlock();
           if (!addr.empty()) {
             static std::atomic_int connects = 0;
-            log("connecting to %s::%s!! :D total %d\n", connectionTypeName[index<API>], addr, ++connects);
+            // log(1, "connecting to %s::%s!! :D total %d\n", connectionTypeName[index<API>], addr, ++connects);
             connect<API, false>(addr, defer);
           }
         }
@@ -1019,14 +1144,14 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
   }
 
   void greet(std::string_view name, PeerId peerId, const std::vector<ConnectionTypeInfo>& info, Deferrer& defer) {
-    log("%p::greet(\"%s\", %s)\n", (void*)this, std::string(name).c_str(), peerId.toString().c_str());
+    // log("%p::greet(\"%s\", %s)\n", (void*)this, name, peerId.toString().c_str());
     BufferHandle buffer;
     serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqGreeting, kSignature, name, peerId, info);
     TensorContext nullTensorContext;
     send(std::move(buffer), nullTensorContext, defer);
   }
 
-  void read(Me<RpcConnectionImpl>&& me) {
+  void readTensorpipe(Me<RpcConnectionImpl>&& me) {
     rpc.log("read %s :: %p\n", connectionTypeName[index<API>], (void*)this);
     API::cast(connection)
         .readDescriptor([me = std::move(me)](auto&& error, tensorpipe::Descriptor desc) mutable noexcept {
@@ -1121,12 +1246,8 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
         });
   }
 
-  void start(Deferrer& defer) {
-    defer([me = makeMe(this)]() mutable { me->read(std::move(me)); });
-  }
-
   template<typename Buffer>
-  void send(Buffer buffer, TensorContext& tensorContext, Deferrer& defer) {
+  void sendTensorpipe(Buffer buffer, TensorContext& tensorContext, Deferrer& defer) {
     // rpc.log("%s :: send %d bytes\n", connectionTypeName[index<API>], buffer->size);
     defer([buffer = std::move(buffer), tensorContext = tensorContext, me = makeMe(this)]() mutable {
       tensorpipe::Message msg;
@@ -1166,6 +1287,45 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
         }
       });
     });
+  }
+
+  void sendDirect(SharedBufferHandle buffer, TensorContext& tensorContext) {
+    API::cast(connection).write(std::move(buffer), nullptr);
+  }
+  void sendDirect(BufferHandle buffer, TensorContext& tensorContext) {
+    sendDirect(SharedBufferHandle(buffer.release()), tensorContext);
+  }
+
+  template<typename Buffer>
+  void send(Buffer buffer, TensorContext& tensorContext, Deferrer& defer) {
+    if constexpr (API::isTensorpipe) {
+      sendTensorpipe(std::move(buffer), tensorContext, defer);
+    } else {
+      sendDirect(std::move(buffer), tensorContext);
+    }
+  }
+
+  void read(Me<RpcConnectionImpl>&& me) {
+    if constexpr (API::isTensorpipe) {
+      readTensorpipe(std::move(me));
+    } else {
+      API::cast(connection).read([me = std::move(me)](auto&& error, BufferHandle buffer) mutable {
+        if (me->dead.load(std::memory_order_relaxed)) {
+          me->rpc.log("already dead!\n");
+          return;
+        }
+        if (error) {
+          me->onError(std::forward<decltype(error)>(error));
+        } else {
+          TensorContext tensorContext;
+          me->onData(std::move(buffer), tensorContext);
+        }
+      });
+    }
+  }
+
+  void start(Deferrer& defer) {
+    defer([me = makeMe(this)]() mutable { me->read(std::move(me)); });
   }
 };
 
@@ -1222,7 +1382,7 @@ struct RpcListenerImpl : RpcListenerImplBase {
       } else {
         auto c = std::make_unique<RpcConnectionImpl<API>>(me->rpc, std::move(conn));
         me->rpc.onAccept(*me, std::move(c), nullptr);
-        if (!me->dead) {
+        if (!me->dead && API::isTensorpipe) {
           me->accept();
         }
       }
@@ -1548,6 +1708,13 @@ struct Rpc::Impl {
           for (auto& v2 : v.second.connections_) {
             std::lock_guard l4(v2.mutex);
             for (auto& v3 : v2.conns) {
+              // BufferHandle buffer;
+              // serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqClose);
+              // TensorContext nullTensorContext;
+              // switchOnAPI((ConnectionType)v3->apiIndex(), [&](auto api) {
+              //   ((RpcConnectionImpl<decltype(api)>&)*v3).send(std::move(buffer), nullTensorContext, defer);
+              // });
+
               defer([ptr = &*v3] { ptr->close(); });
               garbageConnections_.push_back(std::move(v3));
             }
@@ -1819,8 +1986,33 @@ struct Rpc::Impl {
     fflush(stdout);
   }
 
+  void timeoutConnections(std::chrono::steady_clock::time_point now, Deferrer& defer) {
+    std::lock_guard l(peersMutex_);
+    for (auto& v : peers_) {
+      auto& p = v.second;
+      std::lock_guard l(p.idMutex_);
+      for (size_t ci = 0; ci != p.connections_.size(); ++ci) {
+        auto& x = p.connections_[ci];
+        std::lock_guard l(x.mutex);
+        for (size_t i = 0; i != x.conns.size(); ++i) {
+          if (now - x.conns[i]->lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::seconds(30)) {
+            BufferHandle buffer;
+            serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqClose);
+            TensorContext nullTensorContext;
+            switchOnAPI((ConnectionType)ci, [&](auto api) {
+              ((RpcConnectionImpl<decltype(api)>&)*x.conns[i]).send(std::move(buffer), nullTensorContext, defer);
+            });
+            p.throwAway(x, i);
+            --i;
+          }
+        }
+      }
+    }
+  }
+
   void timeoutThreadEntry() {
     async::setCurrentThreadName("timeout");
+    auto lastTimeoutConnections = std::chrono::steady_clock::now();
     while (!terminate_.load(std::memory_order_relaxed)) {
       Deferrer defer;
       auto now = std::chrono::steady_clock::now();
@@ -1895,6 +2087,10 @@ struct Rpc::Impl {
       };
       process(outgoing_);
       process(incoming_);
+      if (now - lastTimeoutConnections >= std::chrono::seconds(10)) {
+        lastTimeoutConnections = now;
+        timeoutConnections(now, defer);
+      }
       defer.execute();
       timeout = timeout_.load(std::memory_order_relaxed);
       while (newTimeout < timeout && !timeout_.compare_exchange_weak(timeout, newTimeout))
@@ -2048,6 +2244,8 @@ struct Rpc::Impl {
         c->conns.push_back(std::move(cu));
         floatingConnections_.push_back(std::move(c));
         floatingConnectionsMap_[&*floatingConnections_.back()->conns.back()] = std::prev(floatingConnections_.end());
+
+        std::call_once(timeoutThreadOnce_, [&]() { startTimeoutThread(); });
       }
     });
   }
@@ -2309,6 +2507,8 @@ struct Rpc::Impl {
         c->conns.push_back(std::move(conn));
         floatingConnections_.push_back(std::move(c));
         floatingConnectionsMap_[&*floatingConnections_.back()->conns.back()] = std::prev(floatingConnections_.end());
+
+        std::call_once(timeoutThreadOnce_, [&]() { startTimeoutThread(); });
       }
     }
   }
@@ -2317,47 +2517,17 @@ struct Rpc::Impl {
     myName = persistentString(name);
   }
 
-  std::pair<std::string_view, int> decodeIpAddress(std::string_view address) {
-    std::string_view hostname = address;
-    int port = 0;
-    auto bpos = address.find('[');
-    if (bpos != std::string_view::npos) {
-      auto bepos = address.find(']', bpos);
-      if (bepos != std::string_view::npos) {
-        hostname = address.substr(bpos + 1, bepos - (bpos + 1));
-        address = address.substr(bepos + 1);
-      }
-    }
-    auto cpos = address.find(':');
-    if (cpos != std::string_view::npos) {
-      if (hostname == address) {
-        hostname = address.substr(0, cpos);
-      }
-      ++cpos;
-      while (cpos != address.size()) {
-        char c = address[cpos];
-        if (c < '0' || c > '9') {
-          break;
-        }
-        port *= 10;
-        port += c - '0';
-        ++cpos;
-      }
-    }
-    return {hostname, port};
-  }
-
   template<typename API>
   void onGreeting(
       RpcConnectionImpl<API>& conn, std::string_view peerName, PeerId peerId, std::vector<ConnectionTypeInfo>&& info) {
-    log("%s::%s::onGreeting!(\"%s\", %s)\n", std::string(myName).c_str(), connectionTypeName[index<API>],
-        std::string(peerName).c_str(), peerId.toString().c_str());
-    for (auto& v : info) {
-      log(" %s\n", std::string(v.name).c_str());
-      for (auto& v2 : v.addr) {
-        log("  @ %s\n", std::string(v2).c_str());
-      }
-    }
+    // log(1, "%s::%s::onGreeting!(\"%s\", %s)\n", std::string(myName).c_str(), connectionTypeName[index<API>],
+    //     std::string(peerName).c_str(), peerId.toString().c_str());
+    // for (auto& v : info) {
+    //   log(1, " %s\n", std::string(v.name).c_str());
+    //   for (auto& v2 : v.addr) {
+    //     log(1, "  @ %s\n", std::string(v2).c_str());
+    //   }
+    // }
     Deferrer defer;
     {
       std::unique_lock l(listenersMutex_);
@@ -2946,6 +3116,7 @@ struct RpcImpl : RpcImplBase {
           rpc.functionCaches.push_back(cache);
           cache.inited = true;
           cache.dtor = [cache = &cache, rpc = &rpc]() noexcept {
+            std::lock_guard l(cache->mutex);
             if (cache->inited) {
               cache->inited = false;
               cache->map.clear();
@@ -3158,11 +3329,19 @@ struct RpcImpl : RpcImplBase {
   }
 
   template<typename... Args>
+  void log(int level, const char* fmt, Args&&... args) {
+    rpc.log(level, fmt, std::forward<Args>(args)...);
+  }
+  template<typename... Args>
   void log(const char* fmt, Args&&... args) {
     rpc.log(fmt, std::forward<Args>(args)...);
   }
 };
 
+template<typename... Args>
+void PeerImpl::log(int level, const char* fmt, Args&&... args) {
+  rpc.log(level, fmt, std::forward<Args>(args)...);
+}
 template<typename... Args>
 void PeerImpl::log(const char* fmt, Args&&... args) {
   rpc.log(fmt, std::forward<Args>(args)...);
@@ -3215,8 +3394,6 @@ std::pair<std::string_view, std::string_view> splitUri(std::string_view uri) {
       ++i;
       if (i != e && i + 1 != e && *i == '/' && i[1] == '/') {
         return {std::string_view(uri.begin(), i - 1 - s), std::string_view(i + 2, e - (i + 2))};
-      } else {
-        return {std::string_view(uri.begin(), i - 1 - s), std::string_view(i, e - i)};
       }
     }
     if (!std::islower(*i) && *i != '_') {
@@ -3229,11 +3406,38 @@ std::pair<std::string_view, std::string_view> splitUri(std::string_view uri) {
 
 void Rpc::listen(std::string_view addr) {
   auto [scheme, path] = splitUri(addr);
-  if (!scheme.empty()) {
-    switchOnScheme(scheme, [&, path = path](auto api) { impl_->listen<decltype(api)>(path); });
-  } else {
-    impl_->listen<API_TPUV>(addr);
+  if (scheme.empty()) {
+    scheme = "tcp";
   }
+  if (scheme == "tcp") {
+    auto v = decodeIpAddress(addr);
+    auto [onlyPort, onlyPortEnd] = decodePort(addr);
+    if (onlyPortEnd == addr.data() + addr.size() && onlyPort < 0x10000) {
+      v.first = "";
+      v.second = onlyPort;
+    }
+    if (v.first == "" || v.first == "*") {
+      switchOnScheme(scheme, [&, path = path](auto api) {
+        bool success = false;
+        for (auto& addr : decltype(api)::defaultAddr()) {
+          try {
+            impl_->listen<decltype(api)>(fmt::sprintf("%s:%d", addr, v.second));
+            success = true;
+          } catch (const std::system_error& e) {
+            if (e.code().value() == EAFNOSUPPORT) {
+              continue;
+            }
+            throw;
+          }
+        }
+        if (!success) {
+          throw std::runtime_error("Failed to listen on any address");
+        }
+      });
+      return;
+    }
+  }
+  switchOnScheme(scheme, [&, path = path](auto api) { impl_->listen<decltype(api)>(path); });
 }
 void Rpc::connect(std::string_view addr) {
   Deferrer defer;
@@ -3241,7 +3445,7 @@ void Rpc::connect(std::string_view addr) {
   if (!scheme.empty()) {
     switchOnScheme(scheme, [&, path = path](auto api) { impl_->connect<decltype(api)>(path, defer); });
   } else {
-    impl_->connect<API_TPUV>(addr, defer);
+    impl_->connect<API_TCP>(addr, defer);
   }
   defer.execute();
 }

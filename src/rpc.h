@@ -39,6 +39,57 @@ extern async::SchedulerFifo scheduler;
 template<typename R>
 using CallbackFunction = Function<void(R*, Error* error)>;
 
+#if 0
+template<typename T>
+struct Me {
+  T* me = nullptr;
+  const char* filename;
+  int line;
+  Me() = default;
+  Me(std::nullptr_t) noexcept {}
+  explicit Me(T* me, const char* filename, int line) noexcept : me(me), filename(filename), line(line) {
+    if (me) {
+      int n = me->activeOps.fetch_add(1, std::memory_order_relaxed) + 1;
+      printf("addref %d %p at %s:%d\n", n, (void*)me, filename, line);
+    }
+  }
+  Me(const Me&) = delete;
+  Me(Me&& n) noexcept {
+    me = std::exchange(n.me, nullptr);
+    filename = n.filename;
+    line = n.line;
+  }
+  Me& operator=(const Me&) = delete;
+  Me& operator=(Me&& n) noexcept {
+    std::swap(me, n.me);
+    std::swap(filename, n.filename);
+    std::swap(line, n.line);
+    return *this;
+  }
+  ~Me() {
+    if (me) {
+      int n = me->activeOps.fetch_sub(1) - 1;
+      printf("decref %d %p at %s:%d\n", n, (void*)me, filename, line);
+    }
+  }
+  T* operator->() const noexcept {
+    return me;
+  }
+  T& operator*() const noexcept {
+    return *me;
+  }
+  explicit operator bool() const noexcept {
+    return me;
+  }
+};
+
+template<typename T>
+auto makeMeImpl(T* v, const char* filename, int line) {
+  return Me<T>(v, filename, line);
+}
+#define makeMe(v) makeMeImpl(v, __FILE__, __LINE__)
+
+#else
 template<typename T>
 struct Me {
   T* me = nullptr;
@@ -78,6 +129,7 @@ template<typename T>
 auto makeMe(T* v) {
   return Me<T>(v);
 }
+#endif
 
 struct TensorContext {
   std::optional<rpc::CUDAStream> stream;
