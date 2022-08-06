@@ -29,7 +29,6 @@ if (USE_CUDA)
 endif()
 
 add_subdirectory(third_party/fmt)
-add_subdirectory(src/tensorpipe)
 add_subdirectory(third_party/pybind11)
 
 #add_subdirectory(test)
@@ -45,11 +44,10 @@ add_library(moorpc OBJECT
   src/transports/socket.cc
   src/transports/ipc.cc
 )
-target_link_libraries(moorpc PUBLIC tensor fmt tensorpipe anl)
-target_include_directories(moorpc PRIVATE src/tensorpipe src)
+target_link_libraries(moorpc PUBLIC tensor fmt anl)
+target_include_directories(moorpc PRIVATE src)
 
 if (USE_CUDA)
-  target_link_libraries(moorpc PUBLIC tensorpipe_cuda)
   target_compile_definitions(tensor PRIVATE -DUSE_CUDA)
   target_compile_definitions(moorpc PRIVATE -DUSE_CUDA)
 endif()
