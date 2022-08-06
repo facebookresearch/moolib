@@ -715,7 +715,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
           throw Error("writev empty callback list");
         }
         if (writtenForCallback >= callbacks[0].first) {
-          // Function<void(Error*)>>{std::move(callbacks[0].second)};
           writtenForCallback -= callbacks[0].first;
           ++callbacks;
           --callbacksLen;

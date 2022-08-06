@@ -1708,13 +1708,6 @@ struct Rpc::Impl {
           for (auto& v2 : v.second.connections_) {
             std::lock_guard l4(v2.mutex);
             for (auto& v3 : v2.conns) {
-              // BufferHandle buffer;
-              // serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqClose);
-              // TensorContext nullTensorContext;
-              // switchOnAPI((ConnectionType)v3->apiIndex(), [&](auto api) {
-              //   ((RpcConnectionImpl<decltype(api)>&)*v3).send(std::move(buffer), nullTensorContext, defer);
-              // });
-
               defer([ptr = &*v3] { ptr->close(); });
               garbageConnections_.push_back(std::move(v3));
             }
