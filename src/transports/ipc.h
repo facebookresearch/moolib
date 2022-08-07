@@ -42,11 +42,13 @@ struct Listener {
 struct Connection : std::enable_shared_from_this<Connection> {
   Socket socket;
   int readState = 0;
+  Function<void(Error*, BufferHandle)> readCallback;
   std::array<char, 32> tmpReadBuffer;
   std::vector<size_t> bufferSizes;
   BufferHandle buffer;
   std::vector<iovec> iovecs;
   std::vector<Allocator> allocators;
+  
   Connection(Socket socket) : socket(std::move(socket)) {}
   ~Connection();
 

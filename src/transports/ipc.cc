@@ -93,12 +93,14 @@ template void Connection::write(SharedBufferHandle, Function<void(Error*)>);
 
 void Connection::close() {
   socket.close();
+  readCallback = nullptr;
 }
 
 void Connection::read(Function<void(Error*, BufferHandle)> callback) {
-  socket.setOnRead([this, callback = std::move(callback)](Error* error, auto* lock) mutable {
+  readCallback = std::move(callback);
+  socket.setOnRead([this](Error* error, auto* lock) mutable {
     if (error) {
-      callback(error, nullptr);
+      readCallback(error, nullptr);
       return;
     }
 
@@ -125,7 +127,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
         default:
           readState = -1;
           Error e("bad signature");
-          callback(&e, nullptr);
+          readCallback(&e, nullptr);
           return;
         }
         buffer = makeBuffer(bufferSize, numBuffers - 1);
@@ -142,7 +144,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
             size_t((std::byte*)(buffer->tensorMetaDataOffsets() + buffer->nTensors) - buffer->data())) {
           readState = -1;
           Error e("bad buffer size");
-          callback(&e, nullptr);
+          readCallback(&e, nullptr);
           return;
         }
         allocators.clear();
@@ -182,12 +184,11 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
         }
         readState = stateZero;
 
-        auto buf = std::move(buffer);
-        lock->unlock();
-        callbackScheduledFromBackend = true;
-        callback(nullptr, std::move(buf));
-        callbackScheduledFromBackend = false;
-        lock->lock();
+        scheduler.run([connection = shared_from_this(), buf = std::move(buffer)]() mutable {
+          callbackScheduledFromBackend = true;
+          connection->readCallback(nullptr, std::move(buf));
+          callbackScheduledFromBackend = false;
+        });
         break;
       }
       }

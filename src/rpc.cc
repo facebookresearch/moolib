@@ -1009,6 +1009,7 @@ struct PeerImpl {
 };
 
 static constexpr uint64_t kSignature = 0xff984b883019d458;
+static constexpr uint64_t kSignatureResponse = kSignature + 1;
 std::string emptyString;
 
 template<typename API>
@@ -1021,7 +1022,11 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
 
   PeerImpl* peer = nullptr;
 
-  std::atomic_bool hasReceivedData{false};
+  std::atomic_bool hasReceivedData = false;
+  std::atomic_bool hasReceivedGreetingResponse = false;
+  SpinMutex earlySendQueueMutex;
+  // todo: TensorContext ?
+  std::vector<SharedBufferHandle> earlySendQueue;
 
   mutable std::once_flag localAddrOnce_;
   mutable std::once_flag remoteAddrOnce_;
@@ -1125,13 +1130,23 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
     } else if (fid == reqGreeting) {
       try {
         uint64_t signature;
-        deserializeBufferPart(ptr, len, signature);
+        auto view = deserializeBufferPart(ptr, len, signature);
         if (signature == kSignature) {
           std::string_view peerName;
           PeerId peerId;
           std::vector<ConnectionTypeInfo> info;
-          deserializeBuffer(ptr, len, signature, peerName, peerId, info);
+          deserializeBuffer(view, peerName, peerId, info);
+          fmt::printf("got greeting!\n");
           rpc.onGreeting(*this, peerName, peerId, std::move(info));
+        } else if (signature == kSignatureResponse) {
+          std::lock_guard l(earlySendQueueMutex);
+          fmt::printf("got greeting response, queue size %d\n", earlySendQueue.size());
+          hasReceivedGreetingResponse = true;
+          Deferrer defer;
+          TensorContext nullTensorContext;
+          for (auto& v : earlySendQueue) {
+            send(v, nullTensorContext, defer);
+          }
         } else {
           rpc.log("signature mismatch\n");
           close();
@@ -1148,7 +1163,16 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
     BufferHandle buffer;
     serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqGreeting, kSignature, name, peerId, info);
     TensorContext nullTensorContext;
-    send(std::move(buffer), nullTensorContext, defer);
+    send(std::move(buffer), nullTensorContext, defer, true);
+  }
+
+  void greetingResponse(Deferrer& defer) {
+    // log("%p::greet(\"%s\", %s)\n", (void*)this, name, peerId.toString().c_str());
+    fmt::printf("sending greeting response!\n");
+    BufferHandle buffer;
+    serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqGreeting, kSignatureResponse);
+    TensorContext nullTensorContext;
+    send(std::move(buffer), nullTensorContext, defer, true);
   }
 
   void readTensorpipe(Me<RpcConnectionImpl>&& me) {
@@ -1289,19 +1313,32 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
     });
   }
 
-  void sendDirect(SharedBufferHandle buffer, TensorContext& tensorContext) {
+  void sendDirect(SharedBufferHandle buffer) {
     API::cast(connection).write(std::move(buffer), nullptr);
   }
-  void sendDirect(BufferHandle buffer, TensorContext& tensorContext) {
-    sendDirect(SharedBufferHandle(buffer.release()), tensorContext);
+  void sendDirect(BufferHandle buffer) {
+    sendDirect(SharedBufferHandle(buffer.release()));
   }
 
   template<typename Buffer>
-  void send(Buffer buffer, TensorContext& tensorContext, Deferrer& defer) {
+  void send(Buffer buffer, TensorContext& tensorContext, Deferrer& defer, bool isGreeting = false) {
+    rpc.log(0, "%s :: send %d bytes\n", connectionTypeName[index<API>], buffer->size);
+    if (!isGreeting && !hasReceivedGreetingResponse.load(std::memory_order_acquire)) {
+      std::lock_guard l(earlySendQueueMutex);
+      if (!hasReceivedGreetingResponse) {
+        fmt::printf("pushing to early send queue!\n");
+        if constexpr (std::is_same_v<Buffer, SharedBufferHandle>) {
+          earlySendQueue.push_back(std::move(buffer));
+        } else {
+          earlySendQueue.push_back(SharedBufferHandle(buffer.release()));
+        }
+        return;
+      }
+    }
     if constexpr (API::isTensorpipe) {
       sendTensorpipe(std::move(buffer), tensorContext, defer);
     } else {
-      sendDirect(std::move(buffer), tensorContext);
+      sendDirect(std::move(buffer));
     }
   }
 
@@ -2363,7 +2400,7 @@ struct Rpc::Impl {
       auto now = std::chrono::steady_clock::now();
       Deferrer defer;
       {
-        log("send request %#x %s::%#x\n", rid, peer.name, fid);
+        log(0, "send request %#x %s::%#x\n", rid, peer.name, fid);
         SharedBufferHandle shared(buffer.release());
         auto& oBucket = getBucket(outgoing_, rid);
         std::unique_lock l(oBucket.mutex);
@@ -2513,14 +2550,14 @@ struct Rpc::Impl {
   template<typename API>
   void onGreeting(
       RpcConnectionImpl<API>& conn, std::string_view peerName, PeerId peerId, std::vector<ConnectionTypeInfo>&& info) {
-    // log(1, "%s::%s::onGreeting!(\"%s\", %s)\n", std::string(myName).c_str(), connectionTypeName[index<API>],
-    //     std::string(peerName).c_str(), peerId.toString().c_str());
-    // for (auto& v : info) {
-    //   log(1, " %s\n", std::string(v.name).c_str());
-    //   for (auto& v2 : v.addr) {
-    //     log(1, "  @ %s\n", std::string(v2).c_str());
-    //   }
-    // }
+    log(1, "%s::%s::onGreeting!(\"%s\", %s)\n", std::string(myName).c_str(), connectionTypeName[index<API>],
+        std::string(peerName).c_str(), peerId.toString().c_str());
+    for (auto& v : info) {
+      log(1, " %s\n", std::string(v.name).c_str());
+      for (auto& v2 : v.addr) {
+        log(1, "  @ %s\n", std::string(v2).c_str());
+      }
+    }
     Deferrer defer;
     {
       std::unique_lock l(listenersMutex_);
@@ -2636,6 +2673,8 @@ struct Rpc::Impl {
             }
           }
         }
+
+        conn.greetingResponse(defer);
 
         for (auto& b : outgoing_) {
           std::lock_guard l(b.mutex);

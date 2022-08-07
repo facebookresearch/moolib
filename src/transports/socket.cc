@@ -37,6 +37,47 @@ struct ResolveHandle {
   }
 };
 
+template<typename Duration>
+static float seconds(Duration duration) {
+  return std::chrono::duration_cast<std::chrono::duration<float, std::ratio<1, 1>>>(duration).count();
+}
+
+
+std::once_flag scheduleFlag;
+void scheduleTest() {
+
+  for (int i = 0; i != 10; ++i) {
+    auto start = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    //fmt::printf("plain clock overhead is %f\n", seconds(now - start) * 1000);
+
+    std::atomic_int doneCount = 0;
+    constexpr int N = 1000;
+
+    auto scheduleTime = std::chrono::steady_clock::now();
+    for (int i = 0; i != N; ++i) {
+      scheduler.run([&, scheduleTime]() {
+        //std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        //fmt::printf("%d scheduled in %g\n", i, seconds(now - scheduleTime) * 1000);
+        auto now = std::chrono::steady_clock::now();
+        if (++doneCount == N) {
+          float t = seconds(now - start);
+          fmt::printf("everything done in %g (%g/s)\n", t * 1000, N / t);
+        }
+      });
+    }
+
+    now = std::chrono::steady_clock::now();
+    float t = seconds(now - start);
+    fmt::printf("run took %g (%g/s)\n", t * 1000, N / t);
+
+    //while (doneCount < N) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+
+  std::exit(0);
+
+}
+
 template<typename F>
 std::shared_ptr<ResolveHandle> resolveIpAddress(std::string_view address, int port, bool asynchronous, F&& callback) {
   auto h = std::make_shared<ResolveHandle>();
@@ -47,6 +88,8 @@ std::shared_ptr<ResolveHandle> resolveIpAddress(std::string_view address, int po
   h->req.ar_request = nullptr;
 
   h->callback = std::move(callback);
+
+  //std::call_once(scheduleFlag, scheduleTest);
 
   Function<void()> f = [asynchronous, wh = std::weak_ptr<ResolveHandle>(h)]() {
     auto h = wh.lock();
@@ -62,7 +105,7 @@ std::shared_ptr<ResolveHandle> resolveIpAddress(std::string_view address, int po
         Error e(std::move(str));
         h->callback(&e, nullptr);
       }
-    }
+    } else fmt::printf("h is null\n");
   };
 
   memset(&h->sevp, 0, sizeof(h->sevp));
@@ -73,6 +116,7 @@ std::shared_ptr<ResolveHandle> resolveIpAddress(std::string_view address, int po
   int r;
   do {
     r = getaddrinfo_a(asynchronous ? GAI_NOWAIT : GAI_WAIT, &ptr, 1, &h->sevp);
+    //fmt::printf("getaddrinfo_a returned %d\n", r);
   } while (r == EAI_INTR);
   if (r) {
     Function<void()>{(FunctionPointer)h->sevp.sigev_value.sival_ptr};
@@ -171,7 +215,10 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       resolveHandle = nullptr;
     }
     if (fd != -1) {
-      ::close(fd);
+      //fmt::printf("close fd %d\n", fd);
+      if (::close(fd)) {
+        perror("close");
+      }
       fd = -1;
     }
     for (auto v : receivedFds) {
@@ -184,7 +231,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   }
 
   void listen(std::string_view address) {
-    std::unique_lock l(writeMutex);
+    std::unique_lock wl(writeMutex);
     if (closed.load(std::memory_order_relaxed)) {
       return;
     }
@@ -202,8 +249,9 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       if (::listen(fd, 50) == -1) {
         throw std::system_error(errno, std::generic_category());
       }
+      fmt::printf("unix socket %d listening on %s\n", fd, path);
     } else if (af == AF_INET) {
-      l.unlock();
+      wl.unlock();
       int port = 0;
       std::tie(address, port) = decodeIpAddress(address);
       auto h =
@@ -211,6 +259,8 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
             if (e) {
               throw *e;
             } else {
+              std::unique_lock wl(writeMutex);
+              std::unique_lock rl(readMutex);
               std::string errors;
               int tries = 0;
               for (auto* i = aix; i; i = i->ai_next) {
@@ -255,7 +305,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
               throw Error(std::move(errors));
             }
           });
-      l.lock();
+      wl.lock();
       resolveHandle = std::move(h);
     } else {
       throw Error("listen: unkown address family\n");
@@ -294,7 +344,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
           s.impl->setTcpSockOpts();
           poll::add(s.impl);
           callback(nullptr, std::move(s));
-          triggerRead();
         }
       }
     };
@@ -315,8 +364,10 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       std::memcpy(&sa.sun_path[1], path.data(), len);
       if (::connect(fd, (const sockaddr*)&sa, sizeof(sa)) && errno != EAGAIN) {
         Error e(std::strerror(errno));
+        fmt::printf("unix socket %d connect to %s failed with error %s\n", fd, path, e.what());
         std::move(callback)(&e);
       } else {
+        fmt::printf("unix socket %d connect to %s succeeded\n", fd, path);
         std::move(callback)(nullptr);
         std::unique_lock ql(writeQueueMutex);
         writeLoop(wl, ql);
@@ -324,6 +375,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     } else {
       wl.unlock();
       int port = 0;
+      //fmt::printf("connect to %s ?\n", address);
       std::tie(address, port) = decodeIpAddress(address);
       auto h = resolveIpAddress(
           address, port, true,
@@ -333,7 +385,9 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
             if (closed.load(std::memory_order_relaxed)) {
               return;
             }
+            //if (e) fmt::printf("resolve error %s\n", e->what());
             if (!e) {
+              //fmt::printf("resolve ok\n");
               for (auto* i = aix; i; i = i->ai_next) {
                 if ((i->ai_family == AF_INET || i->ai_family == AF_INET6) && i->ai_socktype == SOCK_STREAM) {
                   if (fd == -1) {
@@ -342,6 +396,8 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
                       continue;
                     }
                   }
+
+                  //fmt::printf("connect fd %d\n", fd);
 
                   if (::connect(fd, i->ai_addr, i->ai_addrlen) == 0 || errno == EAGAIN || errno == EINPROGRESS) {
                     rl.unlock();
@@ -435,7 +491,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   }
 
   void setOnRead(Function<void(Error*, std::unique_lock<SpinMutex>* lock)> callback) {
-    std::lock_guard l(readMutex);
+    std::unique_lock l(readMutex);
     if (closed.load(std::memory_order_relaxed)) {
       return;
     }
@@ -443,13 +499,12 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       throw Error("onRead callback is already set");
     }
     onRead = std::move(callback);
-    if (readTriggerCount.load(std::memory_order_relaxed)) {
-      triggerRead();
-    }
+    l.unlock();
+    triggerRead();
   }
 
   bool read(void* dst, size_t size) {
-    if (closed.load(std::memory_order_relaxed)) {
+    if (closed.load(std::memory_order_relaxed) || fd == -1) {
       wantsRead = false;
       return false;
     }
@@ -495,17 +550,23 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     msg.msg_control = u.buf;
     msg.msg_controllen = sizeof(u.buf);
     readTriggerCount.store(-0xffff, std::memory_order_relaxed);
+    //fmt::printf("read fd %d\n", fd);
     ssize_t r = ::recvmsg(fd, &msg, MSG_CMSG_CLOEXEC);
+    fmt::printf("recvmsg %d returned %d/%d\n", fd, r, readIovecs[0].iov_len + readIovecs[1].iov_len);
     wantsRead = r == readIovecs[0].iov_len + readIovecs[1].iov_len;
     if (r == -1) {
-      if (errno == EINTR) {
+      int error = errno;
+      fmt::printf("recvmsg error %s\n", std::strerror(error));
+      //fmt::printf("error is %d\n", error);
+      if (error == EINTR) {
         wantsRead = true;
         return false;
       }
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      if (error == EAGAIN || error == EWOULDBLOCK || error == ENOTCONN) {
         return false;
       }
-      Error e(std::strerror(errno));
+      Error e(std::strerror(error));
+      //fmt::printf("read error %s\n", e.what());
       if (onRead) {
         onRead(&e, nullptr);
       }
@@ -540,7 +601,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   }
 
   bool readv(const iovec* vec, size_t veclen) {
-    if (closed.load(std::memory_order_relaxed)) {
+    if (closed.load(std::memory_order_relaxed) || fd == -1) {
       wantsRead = false;
       return false;
     }
@@ -608,6 +669,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
 
     readTriggerCount.store(-0xffff, std::memory_order_relaxed);
     ssize_t r = ::readv(fd, (::iovec*)vec, veclen);
+    fmt::printf("readv %d returned %d/%d bytes\n", fd, r, bytes);
     if (restoreIovecBackup) {
       *(iovec*)vec = iovecbackup;
       vec = ovec;
@@ -615,11 +677,13 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     }
     wantsRead = r == bytes;
     if (r == -1) {
-      if (errno == EINTR) {
+      int error = errno;
+      fmt::printf("readv error %s\n", std::strerror(error));
+      if (error == EINTR) {
         wantsRead = true;
         return false;
       }
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      if (error == EAGAIN || error == EWOULDBLOCK || error == ENOTCONN) {
         return false;
       }
       Error e(std::strerror(errno));
@@ -687,8 +751,14 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         }
       }
     }
+    size_t bytes = 0;
+    for (size_t i = 0; i != veclen; ++i) {
+      bytes += vec[i].iov_len;
+    }
+    //fmt::printf("write to fd %d\n", fd);
     writeTriggerCount.store(-0xffff, std::memory_order_relaxed);
     ssize_t r = ::sendmsg(fd, &msg, MSG_NOSIGNAL);
+    fmt::printf("write to fd %d returned %d/%d\n",fd, r, bytes);
     bool canWrite = false;
     if (r == -1) {
       int e = errno;
@@ -943,7 +1013,10 @@ struct PollThread {
         if (events[i].events & EPOLLOUT) {
           SocketImpl* impl = (SocketImpl*)events[i].data.ptr;
           if (++impl->writeTriggerCount == 1) {
+            //fmt::printf("poll & trigger fd %d\n", impl->fd);
             impl->triggerWrite();
+          } else {
+            //fmt::printf("poll w/o trigger %d\n", impl->fd);
           }
         }
       }
