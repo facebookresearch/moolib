@@ -184,9 +184,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
 
         auto buf = std::move(buffer);
         lock->unlock();
-        callbackScheduledFromBackend = true;
         callback(nullptr, std::move(buf));
-        callbackScheduledFromBackend = false;
         lock->lock();
         break;
       }
