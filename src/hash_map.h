@@ -3,8 +3,7 @@
 #include <cstddef>
 #include <iterator>
 #include <cstring>
-
-//#include "fmt/printf.h"
+#include <cassert>
 
 namespace moolib {
 
@@ -111,10 +110,10 @@ private:
   bool* hasKey = nullptr;
   Key* keys = nullptr;
   Value* values = nullptr;
-  Key** keys2 = nullptr;
-  Value** values2 = nullptr;
+  Key* keys2 = nullptr;
+  size_t* indices2 = nullptr;
+  Value* values2 = nullptr;
   size_t* sizes2 = nullptr;
-  size_t* allocated2 = nullptr;
 public:
   struct iterator {
   private:
@@ -138,34 +137,34 @@ public:
 
     T& operator*() const noexcept {
       // if (!v) {
-      //   fmt::printf("deferencing end tensor\n");
+      //   printf("deferencing end tensor\n");
       //   std::abort();
       // }
       // size_t bs = map->ksize;
       // if (bs == 0) {
-      //   fmt::printf("map is empty!\n");
-      //   std::abort();
-      // }
-      // if (ki >= bs) {
-      //   fmt::printf("out of bounds ki! (%d/%d)\n", ki, bs);
+      //   printf("map is empty!\n");
       //   std::abort();
       // }
       // if (vi == -1) {
+      //   if (ki >= bs) {
+      //     printf("out of bounds ki! (%d/%d)\n", ki, bs);
+      //     std::abort();
+      //   }
       //   if (!map->hasKey[ki]) {
-      //     fmt::printf("map does not have key! %d\n", ki);
+      //     printf("map does not have key! %d\n", ki);
       //     std::abort();
       //   }
       //   if (v != &map->values[ki]) {
-      //     fmt::printf("v ki mismatch\n");
+      //     printf("v ki mismatch\n");
       //     std::abort();
       //   }
       // } else {
-      //   if (vi >= map->sizes2[ki]) {
-      //     fmt::printf("out of bounds vi! (%d/%d)\n", vi, map->sizes2[ki]);
+      //   if (vi >= map->ksize) {
+      //     printf("out of bounds vi! (%d/%d)\n", vi, map->ksize);
       //     std::abort();
       //   }
-      //   if (v != &map->values2[ki][vi]) {
-      //     fmt::printf("v vi mismatch\n");
+      //   if (v != &map->values2[vi]) {
+      //     printf("v vi mismatch\n");
       //     std::abort();
       //   }
       // }
@@ -174,87 +173,39 @@ public:
     T* operator->() const noexcept {
       return &**this;
     }
-    void prevValid() {
-      do {
-        if (ki == 0) {
-          ki = map->ksize - 1;
-          vi = -1;
-          v = map->values[ki];
-          return;
-        }
-        --ki;
-      } while (map->sizes2[ki] == 0);
-      vi = map->sizes2[ki] - 1;
-      v = &map->values2[ki][vi];
-    }
-    void nextValid() {
-      size_t s = map->ksize;
-      vi = 0;
-      do {
-        ++ki;
-        if (ki == s) {
-          v = nullptr;
-          return;
-        }
-      } while (map->sizes2[ki] == 0);
-      v = &map->values2[ki][0];
-      **this;
-    }
+
     iterator& operator++() noexcept {
+      **this;
       if (vi == -1) {
         do {
           if (ki == map->ksize - 1) {
             ki = -1;
             vi = 0;
-            nextValid();
-            break;
+            v = &map->values2[vi];
+            if (map->indices2[vi] != -1) {
+              return *this;
+            }
+            return ++*this;
           } else {
             ++ki;
             ++v;
           }
         } while (!map->hasKey[ki]);
       } else {
-        if (vi == map->sizes2[ki] - 1) {
-          nextValid();
-          if (v) {
-            **this;
+        do {
+          if (vi == map->ksize - 1) {
+            v = nullptr;
+            return *this;
           }
-        } else {
           ++vi;
           ++v;
-        }
+        } while (map->indices2[vi] == -1);
       }
       return *this;
     }
     iterator operator++(int) noexcept {
       iterator r = *this;
       ++r;
-      return r;
-    }
-    iterator& operator--() noexcept {
-      if (vi == -1) {
-        do {
-          if (ki == 0) {
-            v = nullptr;
-            break;
-          } else {
-            --ki;
-            --v;
-          }
-        } while (!map->hasKey[ki]);
-      } else {
-        if (vi == 0) {
-          prevValid();
-        } else {
-          --vi;
-          --v;
-        }
-      }
-      return *this;
-    }
-    iterator operator--(int) noexcept {
-      iterator r = *this;
-      --r;
       return r;
     }
     bool operator==(iterator n) const noexcept {
@@ -270,22 +221,12 @@ public:
   HashMap& operator=(const HashMap&) = delete;
   ~HashMap() {
     clear();
-    if (keys2) {
-      size_t bs = ksize;
-      for (size_t ki = 0; ki != bs; ++ki) {
-        if (keys2[ki]) {
-          deallocate(keys2[ki]);
-          deallocate(values2[ki]);
-        }
-      }
-    }
     deallocate(hasKey);
     deallocate(keys);
     deallocate(values);
     deallocate(keys2);
     deallocate(values2);
     deallocate(sizes2);
-    deallocate(allocated2);
   }
 
   void clear() noexcept {
@@ -296,22 +237,24 @@ public:
     }
   }
   iterator begin() noexcept {
-    size_t bs = ksize;
-    if (bs == 0) {
+    if (!hasKey) {
       return end();
     }
+    size_t bs = ksize;
     for (size_t i = 0; i != bs; ++i) {
       if (hasKey[i]) {
         return iterator(this, i, -1, &values[i]);
       }
     }
-    auto r = iterator(this, -1, 0, nullptr);
-    r.nextValid();
-    *r;
-    return r;
+    for (size_t i = 0; i != bs; ++i) {
+      if (indices2[i] != -1) {
+        return iterator(this, i, i, &values2[i]);
+      }
+    }
+    return end();
   }
   iterator end() noexcept {
-    return iterator(this, ksize, 0, nullptr);
+    return iterator(this, 0, 0, nullptr);
   }
 
   template<typename T>
@@ -334,22 +277,29 @@ public:
   }
 
   iterator erase(iterator i) noexcept {
-    *i;
+    auto mask = ksize - 1;
     size_t ki = i.ki;
     size_t vi = i.vi;
     --msize;
+    auto* keys2 = this->keys2;
+    auto* values2 = this->values2;
+    auto* sizes2 = this->sizes2;
     if (vi == -1) {
-      Key* keylist = keys2[ki];
       size_t s = sizes2[ki];
       if (s) {
         --s;
-        sizes2[ki] = s;
-        Key* k = &keylist[s];
-        Value* v = &values2[ki][s];
+        size_t index = (ki + s) & mask;
+        Key* k = &keys2[index];
+        Value* v = &values2[index];
+        indices2[index] = -1;
         keys[ki] = std::move(*k);
         values[ki] = std::move(*v);
         k->~Key();
         v->~Value();
+        while (s && indices2[(ki + s - 1) & mask] != ki) {
+          --s;
+        }
+        sizes2[ki] = s;
         return i;
       }
       ++i;
@@ -362,20 +312,20 @@ public:
       return i;
     } else {
       size_t s = sizes2[ki] - 1;
-      Key* keylist = keys2[ki];
-      Value* valuelist = values2[ki];
-      if (s == vi) {
+      size_t lastIndex = (ki + s) & mask;
+      if (lastIndex == vi) {
         ++i;
       } else {
-        keylist[vi] = std::move(keylist[s]);
-        valuelist[vi] = std::move(valuelist[s]);
+        keys2[vi] = std::move(keys2[lastIndex]);
+        values2[vi] = std::move(values2[lastIndex]);
       }
-      keylist[s].~Key();
-      valuelist[s].~Value();
+      indices2[lastIndex] = -1;
+      keys2[lastIndex].~Key();
+      values2[lastIndex].~Value();
+      while (s && indices2[(ki + s - 1) & mask] != ki) {
+        --s;
+      }
       sizes2[ki] = s;
-      if (i != end()) {
-        *i;
-      }
       return i;
     }
   }
@@ -404,17 +354,14 @@ public:
     if (oldHasKey) {
       size_t bs = ksize;
       ksize = newBs;
-      int hits = 0;
       for (size_t i = 0; i != bs; ++i) {
         if (oldHasKey[i]) {
           insert(std::move(oldKeys[i]), std::move(oldValues[i]));
           --msize;
           oldKeys[i].~Key();
           oldValues[i].~Value();
-          ++hits;
         }
       }
-      //printf("hits: %d/%d  misses: %d\n", hits, bs, bs - hits);
       ksize = bs;
     }
 
@@ -428,35 +375,28 @@ public:
       printf("bucket count is not a multiple of 2!\n");
       std::abort();
     }
-    Key** oldKeys2 = keys2;
-    Value** oldValues2 = values2;
+    Key* oldKeys2 = keys2;
+    Value* oldValues2 = values2;
     size_t* oldSizes2 = sizes2;
-    size_t* oldAllocated2 = allocated2;
+    size_t* oldIndices2 = indices2;
 
-    keys2 = allocate<Key*>(newBs);
-    values2 = allocate<Value*>(newBs);
+    keys2 = allocate<Key>(newBs);
+    values2 = allocate<Value>(newBs);
     sizes2 = allocate<size_t>(newBs);
-    allocated2 = allocate<size_t>(newBs);
+    indices2 = allocate<size_t>(newBs);
 
     std::memset(sizes2, 0, sizeof(size_t) * newBs);
-    std::memset(keys2, 0, sizeof(Key*) * newBs);
+    std::memset(indices2, -1, sizeof(size_t) * newBs);
 
     if (oldKeys2) {
       size_t bs = ksize;
       ksize = newBs;
-      for (size_t ki = 0; ki != bs; ++ki) {
-        Key* keylist = oldKeys2[ki];
-        if (keylist) {
-          Value* valuelist = oldValues2[ki];
-          size_t s = oldSizes2[ki];
-          for (size_t vi = 0; vi != s; ++vi) {
-            insert(std::move(keylist[vi]), std::move(valuelist[vi]));
-            --msize;
-            oldKeys2[ki][vi].~Key();
-            oldValues2[ki][vi].~Value();
-          }
-          deallocate(keylist);
-          deallocate(valuelist);
+      for (size_t i = 0; i != bs; ++i) {
+        if (oldIndices2[i] != -1) {
+          insert(std::move(oldKeys2[i]), std::move(oldValues2[i]));
+          --msize;
+          oldKeys2[i].~Key();
+          oldValues2[i].~Value();
         }
       }
       ksize = bs;
@@ -465,31 +405,34 @@ public:
     deallocate(oldKeys2);
     deallocate(oldValues2);
     deallocate(oldSizes2);
-    deallocate(oldAllocated2);
+    deallocate(oldIndices2);
   }
 
   template<typename KeyT>
   iterator find(KeyT&& key) noexcept {
     size_t bs = ksize;
-    if (bs == 0) {
-      return end();
+    auto* hasKey = this->hasKey;
+    size_t mask = bs - 1;
+    size_t ki = Hash()(key) & mask;
+    if (bs == 0 | !hasKey) {
+      return iterator(this, ki, -1, nullptr);
     }
-    size_t ki = Hash()(key) & (bs - 1);
-    if (hasKey && hasKey[ki] && keys[ki] == key) {
+    if (!hasKey[ki]) {
+      return iterator(this, ki, -1, nullptr);
+    }
+    if (keys[ki] == key) {
       return iterator(this, ki, -1, &values[ki]);
     }
-    Key* keylist = keys2[ki];
-    if (keylist) {
-      size_t s = sizes2[ki];
-      for (size_t vi = 0; vi != s; ++vi) {
-        if (keylist[vi] == key) {
-          //fmt::printf("map %p found key %#x\n", (void*)this, key);
-          return iterator(this, ki, vi, &values2[ki][vi]);
-        }
+    size_t s = sizes2[ki];
+    size_t index = ki + s;
+    while (index != ki) {
+      --index;
+      size_t i = index & mask;
+      if (indices2[i] == ki && keys2[i] == key) {
+        return iterator(this, ki, i, &values2[i]);
       }
     }
-    //fmt::printf("map %p no find key %#x\n", (void*)this, key);
-    return end();
+    return iterator(this, ki, (ki + s) & mask, nullptr);
   }
 
   void reserve(size_t n) {
@@ -510,79 +453,41 @@ public:
     if (!hasKey) {
       reserve(16);
     }
-    size_t bs = ksize;
-    size_t ki = Hash()(key) & (bs - 1);
-    while (true) {
-      if (hasKey[ki]) {
-        if (keys[ki] == key) {
-          return std::make_pair(iterator(this, ki, -1, &values[ki]), false);
-        }
-      } else {
-        ++msize;
-        new (&keys[ki]) Key(std::forward<KeyT>(key));
-        new (&values[ki]) Value(std::forward<Args>(args)...);
-        //printf("constructed at %p\n", (void*)&values[ki]);
-        hasKey[ki] = true;
-        return std::make_pair(iterator(this, ki, -1, &values[ki]), true);
-      }
-      if (bs < msize) {
-        bs *= 2;
-        rehash1(bs);
-        rehash2(bs);
-        ksize = bs;
-        ki = Hash()(key) & (bs - 1);
-        continue;
-      }
-      break;
-    }
-    size_t s;
-    //printf("keys2 is %p\n", (void*)keys2);
-    Key* ok = keys2[ki];
-    //printf("ok is %p\n", (void*)ok);
-    Value* ov = values2[ki];
-    if (!ok) {
-      ok = allocate<Key>(1);
-      ov = allocate<Value>(1);
-      //printf("allocate for %d\n", ki);
-      keys2[ki] = ok;
-      values2[ki] = ov;
-      sizes2[ki] = 0;
-      allocated2[ki] = 1;
-      s = 0;
-    } else {
-      s = sizes2[ki];
-      for (size_t vi = 0; vi != s; ++vi) {
-        if (ok[vi] == key) {
-          return std::make_pair(iterator(this, ki, vi, &values2[ki][vi]), false);
-        }
-      }
-      size_t a = allocated2[ki];
-      if (s == a) {
-        size_t na = a + (a + 1) / 2;
-        Key* nk = allocate<Key>(na);
-        Value* nv = allocate<Value>(na);
-        for (size_t vi = 0; vi != s; ++vi) {
-          new (&nk[vi]) Key(std::move(ok[vi]));
-          new (&nv[vi]) Value(std::move(ov[vi]));
-          ok[vi].~Key();
-          ov[vi].~Value();
-        }
-        deallocate(ok);
-        deallocate(ov);
-        keys2[ki] = nk;
-        values2[ki] = nv;
-        allocated2[ki] = na;
-        ok = nk;
-        ov = nv;
-      }
+    auto i = find(key);
+    if (i.v) {
+      return std::make_pair(i, false);
     }
     ++msize;
-    //fmt::printf("ctor?\n");
-    new (&ok[s]) Key(std::forward<KeyT>(key));
-    new (&ov[s]) Value(std::forward<Args>(args)...);
-    //fmt::printf("ctor done!\n");
-    sizes2[ki] = s + 1;
-    return std::make_pair(iterator(this, ki, s, &ov[s]), true);
+    if (ksize < msize) {
+      reserve(msize);
+      i = find(key);
+      assert(i.v == nullptr);
+    }
+    if (i.vi == -1) {
+      auto* keys = this->keys;
+      auto* values = this->values;
+      hasKey[i.ki] = true;
+      new (&keys[i.ki]) Key(std::forward<KeyT>(key));
+      new (&values[i.ki]) Value(std::forward<Args>(args)...);
+      return std::make_pair(iterator(this, i.ki, -1, &values[i.ki]), true);
+    } else {
+      auto* indices2 = this->indices2;
+      auto* sizes2 = this->sizes2;
+      auto* keys2 = this->keys2;
+      auto* values2 = this->values2;
+      size_t mask = ksize - 1;
+      size_t s = sizes2[i.ki] + 1;
+      size_t index = i.vi;
+      while (indices2[index] != -1) {
+        index = (index + 1) & mask;
+        ++s;
+      }
+      sizes2[i.ki] = s;
+      indices2[index] = i.ki;
+      new (&keys2[index]) Key(std::forward<KeyT>(key));
+      new (&values2[index]) Value(std::forward<Args>(args)...);
+      return std::make_pair(iterator(this, i.ki, index, &values2[index]), true);
+    }
   }
 
   size_t bucket_count() const noexcept {
