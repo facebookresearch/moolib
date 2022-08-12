@@ -8,6 +8,7 @@
 #pragma once
 
 #include "buffer.h"
+#include "hash_map.h"
 
 #include <cstddef>
 #include <cstring>
@@ -129,6 +130,24 @@ void serialize(X& x, const std::unordered_map<Key, Value>& v) {
 
 template<typename X, typename Key, typename Value>
 void serialize(X& x, std::unordered_map<Key, Value>& v) {
+  v.clear();
+  size_t n = x.template read<size_t>();
+  for (; n; --n) {
+    auto k = x.template read<Key>();
+    v.emplace(std::move(k), x.template read<Value>());
+  }
+}
+
+template<typename X, typename Key, typename Value>
+void serialize(X& x, const moolib::HashMap<Key, Value>& v) {
+  x(v.size());
+  for (auto& v2 : v) {
+    x(v2.first, v2.second);
+  }
+}
+
+template<typename X, typename Key, typename Value>
+void serialize(X& x, moolib::HashMap<Key, Value>& v) {
   v.clear();
   size_t n = x.template read<size_t>();
   for (; n; --n) {

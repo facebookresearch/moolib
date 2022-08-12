@@ -26,6 +26,44 @@
 
 namespace rpc {
 
+extern thread_local std::array<const char*, 4000> names;
+extern thread_local std::array<uint64_t, 4000> times;
+
+extern thread_local bool timeEnabled;
+
+struct Timex {
+  size_t index;
+  uint64_t start = __rdtsc();
+  bool isDone = false;
+  Timex(int line, const char* name) : index(line) {
+    names[index] = name;
+  }
+  ~Timex() {
+    done();
+  }
+  void done() {
+    if (!isDone && timeEnabled) {
+      times[index] += __rdtsc() - start;
+      isDone = true;
+    }
+  }
+};
+
+struct TimexEnabler {
+  bool wasEnabled = timeEnabled;
+  TimexEnabler() {
+    timeEnabled = true;
+  }
+  ~TimexEnabler() {
+    timeEnabled = wasEnabled;
+  }
+};
+
+#define TIME(name) //rpc::Timex timer__##name(__LINE__, #name);
+#define ENDTIME(name) //timer__##name.done();
+
+#define ENABLE_TIME() //rpc::TimexEnabler __timer__enabler;
+
 struct Error : std::exception {
   std::string str;
   Error() {}
@@ -97,6 +135,7 @@ enum ReqType : uint32_t {
   reqAck,
   reqNack,
   reqFunctionNotFound,
+  reqInitPoke,
   reqPoke,
   reqLookingForPeer,
   reqPeerFound,
@@ -219,6 +258,7 @@ struct Rpc {
     virtual ~FImpl() {}
     virtual void
     call(BufferHandle inbuffer, TensorContext& tensorContext, Function<void(BufferHandle)> callback) noexcept override {
+      TIME(FImplCall);
       try {
         std::tuple<std::decay_t<Args>...> args;
         constexpr bool takesStream =
@@ -226,14 +266,21 @@ struct Rpc {
             std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, std::optional<CUDAStream>, Args...>;
         constexpr bool isDeferred =
             std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, Args...> ||
-            std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, std::optional<CUDAStream>, Args...>;
+            std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, std::optional<CUDAStream>, Args...>; 
+        constexpr bool takesBuffer = sizeof...(Args) == 1 && std::is_same_v<std::decay_t<decltype(std::get<0>(args))>, BufferHandle>;
         auto in = [&]() {
+          TIME(FImplCallin);
           uint32_t rid, fid;
-          std::apply(
-              [&](std::decay_t<Args>&... args) { deserializeBuffer(std::move(inbuffer), rid, fid, args...); }, args);
+          if constexpr (takesBuffer) {
+            std::get<0>(args) = std::move(inbuffer);
+          } else {
+            std::apply(
+                [&](std::decay_t<Args>&... args) { deserializeBuffer(std::move(inbuffer), rid, fid, args...); }, args);
+          }
         };
         BufferHandle outbuffer;
         auto out = [this, &args, &outbuffer, &tensorContext]() {
+          TIME(FImplCallout);
           if constexpr (!isDeferred) {
             auto wrap = [&](auto&&... args) {
               if constexpr (takesStream) {
@@ -242,6 +289,7 @@ struct Rpc {
                 if (tensorContext.stream) {
                   tensorContext.stream->synchronize();
                 }
+                TIME(FImplWrapCall);
                 return f(std::forward<decltype(args)>(args)...);
               }
             };
@@ -249,7 +297,11 @@ struct Rpc {
               std::apply(wrap, std::move(args));
               serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqSuccess);
             } else {
-              serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqSuccess, std::apply(wrap, std::move(args)));
+              if constexpr (std::is_same_v<R, BufferHandle>) {
+                outbuffer = std::apply(wrap, std::move(args));
+              } else {
+                serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqSuccess, std::apply(wrap, std::move(args)));
+              }
             }
           }
         };
@@ -308,10 +360,28 @@ struct Rpc {
   void undefine(std::string_view name);
 
   template<typename... Args>
-  BufferHandle serializeArguments(const Args&... args) {
+  static BufferHandle serializeArguments(const Args&... args) {
     BufferHandle buffer;
     serializeToBuffer(buffer, (uint32_t)0, (uint32_t)0, args...);
     return buffer;
+  }
+
+  template<typename... Args>
+  static void serializeReturn(BufferHandle& buffer, const Args&... args) {
+    serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqSuccess, args...);
+  }
+
+  template<typename... Args>
+  static BufferHandle serializeReturn(const Args&... args) {
+    BufferHandle buffer;
+    serializeReturn(buffer, args...);
+    return buffer;
+  }
+
+  template<typename Buffer, typename... Args>
+  static void deserializeArguments(Buffer& buffer, Args&... args) {
+    uint32_t rid, fid;
+    deserializeBuffer(buffer, rid, fid, args...);
   }
 
   template<typename R, typename Callback, typename... Args>

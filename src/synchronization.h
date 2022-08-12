@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <mutex>
+#include <shared_mutex>
 #include <thread>
 
 #ifdef __linux__
@@ -81,24 +82,87 @@ public:
 };
 #else
 class SpinMutex {
-  std::atomic<bool> locked_{false};
+  std::atomic<bool> locked = false;
 
 public:
   void lock() {
     do {
-      while (locked_.load(std::memory_order_acquire)) {
+      while (locked.load(std::memory_order_relaxed)) {
         _mm_pause();
       }
-    } while (locked_.exchange(true, std::memory_order_acquire));
+    } while (locked.exchange(true, std::memory_order_acquire));
   }
   void unlock() {
-    locked_.store(false);
+    locked.store(false, std::memory_order_release);
   }
   bool try_lock() {
-    if (locked_.load(std::memory_order_acquire)) {
+    if (locked.load(std::memory_order_relaxed)) {
       return false;
     }
-    return !locked_.exchange(true, std::memory_order_acquire);
+    return !locked.exchange(true, std::memory_order_acquire);
+  }
+};
+#endif
+
+#if 0
+using SharedSpinMutex = std::shared_mutex;
+#else
+class SharedSpinMutex {
+  std::atomic_bool locked = false;
+  std::atomic_int shareCount = 0;
+public:
+  void lock() {
+    do {
+      while (locked.load(std::memory_order_relaxed)) {
+        _mm_pause();
+      }
+    } while (locked.exchange(true, std::memory_order_acquire));
+    while (shareCount.load(std::memory_order_relaxed)) {
+      _mm_pause();
+    }
+  }
+  void unlock() {
+    locked.store(false, std::memory_order_release);
+  }
+  bool try_lock() {
+    if (locked.load(std::memory_order_relaxed)) {
+      return false;
+    }
+    if (shareCount.load(std::memory_order_relaxed) == 0 && !locked.exchange(true, std::memory_order_acquire)) {
+      if (shareCount.load(std::memory_order_relaxed) == 0) {
+        return true;
+      } else {
+        locked.store(false, std::memory_order_relaxed);
+      }
+    }
+    return false;
+  }
+  void lock_shared() {
+    while (true) {
+      while (locked.load(std::memory_order_relaxed)) {
+        _mm_pause();
+      }
+      shareCount.fetch_add(1, std::memory_order_acq_rel);
+      if (locked.load(std::memory_order_relaxed)) {
+        shareCount.fetch_sub(1, std::memory_order_acquire);
+      } else {
+        break;
+      }
+    }
+  }
+  void unlock_shared() {
+    shareCount.fetch_sub(1, std::memory_order_release);
+  }
+  bool try_lock_shared() {
+    if (locked.load(std::memory_order_relaxed)) {
+      return false;
+    }
+    shareCount.fetch_add(1, std::memory_order_acq_rel);
+    if (locked.load(std::memory_order_relaxed)) {
+      shareCount.fetch_sub(1, std::memory_order_acquire);
+      return false;
+    }
+    return true;
   }
 };
 #endif

@@ -1017,25 +1017,47 @@ struct RpcWrapper {
             }
           });
     } else {
-      rpc->define<GilWrapper<py::object>(std::optional<GilWrapper<py::args>>, std::optional<GilWrapper<py::kwargs>>)>(
+      rpc->define<rpc::BufferHandle(rpc::BufferHandle)>(
           name, [callback = GilWrapper<py::function>(std::move(callback))](
-                    std::optional<GilWrapper<py::args>> args, std::optional<GilWrapper<py::kwargs>> kwargs) mutable {
+                    rpc::BufferHandle buffer) mutable {
+            TIME(DEFINECALL);
+            TIME(GIL_SCOPED_ACQUIRE);
             py::gil_scoped_acquire gil;
+            ENDTIME(GIL_SCOPED_ACQUIRE);
+            TIME(CALL_DESERIALIZE);
+            std::optional<py::args> args;
+            std::optional<py::kwargs> kwargs;
+            rpc::Rpc::deserializeArguments(buffer, args, kwargs);
+            TIME(CALL_OTHER);
             if (_Py_IsFinalizing()) {
-              return GilWrapper<py::object>(py::none());
+              //return GilWrapper<py::object>(py::none());
+              return (rpc::BufferHandle)nullptr;
             }
             keepThreadAlive();
+            py::object retval;
             if (args) {
               if (kwargs) {
-                return GilWrapper<py::object>((*callback)(**std::move(*args), ***std::move(*kwargs)));
+                ENDTIME(CALL_OTHER);
+                TIME(PyObject_Call);
+                retval = py::reinterpret_steal<py::object>(PyObject_Call(callback->ptr(), args->ptr(), kwargs->ptr()));
+                //fmt::printf("both\n");
+                //return GilWrapper<py::object>((*callback)(**std::move(*args), ***std::move(*kwargs)));
               } else {
-                return GilWrapper<py::object>((*callback)(**std::move(*args)));
+                fmt::printf("just args\n");
+                std::abort();
+                //return GilWrapper<py::object>((*callback)(**std::move(*args)));
               }
             } else if (kwargs) {
-              return GilWrapper<py::object>((*callback)(***std::move(*kwargs)));
+              fmt::printf("kwargs\n");
+              std::abort();
+              //return GilWrapper<py::object>((*callback)(***std::move(*kwargs)));
             } else {
-              return GilWrapper<py::object>((*callback)());
+              fmt::printf("no args\n");
+              std::abort();
+              //return GilWrapper<py::object>((*callback)());
             }
+            rpc::Rpc::serializeReturn(buffer, retval);
+            return buffer;
           });
     }
   }

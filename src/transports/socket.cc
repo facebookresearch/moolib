@@ -552,11 +552,13 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     readTriggerCount.store(-0xffff, std::memory_order_relaxed);
     //fmt::printf("read fd %d\n", fd);
     ssize_t r = ::recvmsg(fd, &msg, MSG_CMSG_CLOEXEC);
-    fmt::printf("recvmsg %d returned %d/%d\n", fd, r, readIovecs[0].iov_len + readIovecs[1].iov_len);
+    if (r > 200) {
+      //fmt::printf("recvmsg %d returned %d/%d\n", fd, r, readIovecs[0].iov_len + readIovecs[1].iov_len);
+    }
     wantsRead = r == readIovecs[0].iov_len + readIovecs[1].iov_len;
     if (r == -1) {
       int error = errno;
-      fmt::printf("recvmsg error %s\n", std::strerror(error));
+      //fmt::printf("recvmsg error %s\n", std::strerror(error));
       //fmt::printf("error is %d\n", error);
       if (error == EINTR) {
         wantsRead = true;
@@ -644,21 +646,23 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     }
 
     size_t left = prevReadOffset;
-    for (size_t i = 0;; ++i) {
-      if (i == veclen) {
-        throw std::runtime_error("readv skipped entire buffer");
-      }
-      if (left < vec[i].iov_len) {
-        vec = &vec[i];
-        veclen -= i;
-        iovecbackup = *vec;
-        restoreIovecBackup = true;
-        iovec* v = (iovec*)vec;
-        v[0].iov_base = (char*)v[0].iov_base + left;
-        v[0].iov_len -= left;
-        break;
-      } else {
-        left -= vec[i].iov_len;
+    if (left) {
+      for (size_t i = 0;; ++i) {
+        if (i == veclen) {
+          throw std::runtime_error("readv skipped entire buffer");
+        }
+        if (left < vec[i].iov_len) {
+          vec = &vec[i];
+          veclen -= i;
+          iovecbackup = *vec;
+          restoreIovecBackup = true;
+          iovec* v = (iovec*)vec;
+          v[0].iov_base = (char*)v[0].iov_base + left;
+          v[0].iov_len -= left;
+          break;
+        } else {
+          left -= vec[i].iov_len;
+        }
       }
     }
 
@@ -669,7 +673,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
 
     readTriggerCount.store(-0xffff, std::memory_order_relaxed);
     ssize_t r = ::readv(fd, (::iovec*)vec, veclen);
-    fmt::printf("readv %d returned %d/%d bytes\n", fd, r, bytes);
+    //fmt::printf("readv %d returned %d/%d bytes\n", fd, r, bytes);
     if (restoreIovecBackup) {
       *(iovec*)vec = iovecbackup;
       vec = ovec;
@@ -678,7 +682,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     wantsRead = r == bytes;
     if (r == -1) {
       int error = errno;
-      fmt::printf("readv error %s\n", std::strerror(error));
+      //fmt::printf("readv error %s\n", std::strerror(error));
       if (error == EINTR) {
         wantsRead = true;
         return false;
@@ -715,6 +719,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     if (closed.load(std::memory_order_relaxed)) {
       return false;
     }
+    TIME(writevImpl);
 
     msghdr msg;
     union {
@@ -751,14 +756,18 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         }
       }
     }
-    size_t bytes = 0;
-    for (size_t i = 0; i != veclen; ++i) {
-      bytes += vec[i].iov_len;
-    }
+    // size_t bytes = 0;
+    // for (size_t i = 0; i != veclen; ++i) {
+    //   bytes += vec[i].iov_len;
+    // }
     //fmt::printf("write to fd %d\n", fd);
     writeTriggerCount.store(-0xffff, std::memory_order_relaxed);
+    TIME(sendmsg);
     ssize_t r = ::sendmsg(fd, &msg, MSG_NOSIGNAL);
-    fmt::printf("write to fd %d returned %d/%d\n",fd, r, bytes);
+    ENDTIME(sendmsg);
+    // if (r < bytes) {
+    //   fmt::printf("write to fd %d returned %d/%d\n",fd, r, bytes);
+    // }
     bool canWrite = false;
     if (r == -1) {
       int e = errno;
@@ -845,6 +854,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   }
 
   void writev(const iovec* vec, size_t veclen, Function<void(Error*)> callback) {
+    TIME(writev);
     std::unique_lock ql(writeQueueMutex);
     if (closed.load(std::memory_order_relaxed)) {
       return;
@@ -894,6 +904,11 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       bytes += vec[i].iov_len;
     }
     queuedWriteCallbacks.emplace_back(bytes, std::move(callback));
+    // bytes = 0;
+    // for (auto& v : queuedWrites) {
+    //   bytes += v.iov_len;
+    // }
+    //fmt::printf("tid %d, fd %d queued, queuedWrites.size() is now %d, %d bytes\n", ::gettid(), fd, queuedWrites.size(), bytes);
   }
 
   void sendFd(int fd, Function<void(Error*)> callback) {
