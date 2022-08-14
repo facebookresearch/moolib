@@ -8,6 +8,14 @@ namespace h3 {
 #include "src/hash_map3.h"
 }
 
+namespace h4 {
+#include "src/hash_map4.h"
+}
+
+namespace h5 {
+#include "src/hash_map5.h"
+}
+
 #include "../tmp/hash-table-shootout/flat_hash_map/flat_hash_map.hpp"
 
 #include <string>
@@ -104,6 +112,7 @@ struct Clock {
 };
 
 //#define time(name, x) start = __rdtsc(); std::atomic_thread_fence(std::memory_order_seq_cst); x; std::atomic_thread_fence(std::memory_order_seq_cst); end = __rdtsc(); names[__LINE__] = #name; times[__LINE__] += end - start; counts[__LINE__] += 1;
+//#define time(name, x) start = __rdtsc(); x; end = __rdtsc(); names[__LINE__] = #name; times[__LINE__] += end - start; counts[__LINE__] += 1;
 #define time(name, x) x
 
 #define unrollSetBits(inputvalue, code) \
@@ -154,15 +163,17 @@ int main() {
   // return 0;
 
   moolib::HashMap<int, int, std::hash<int>> map;
+  //std::unordered_map<int, int> map;
   std::unordered_map<int, int> map2;
-  //h2::moolib::HashMap<int, int> map2;
+  //h2::moolib::HashMap<int, int> map;
   //h3::moolib::HashMap<int, int> map2;
   //ska::flat_hash_map<int, int, ska::power_of_two_std_hash<int64_t>> map2;
+  //ska::flat_hash_map<int, int, ska::power_of_two_std_hash<int64_t>> map;
 
   std::vector<int> values;
   for (int i = 0; i != 2200000; ++i) {
 //    values.push_back(rand());
-    srand(Clock::now().time_since_epoch().count());
+//    srand(Clock::now().time_since_epoch().count());
   }
 
   // for (auto& v : values) {
@@ -204,8 +215,8 @@ int main() {
     //       if (i != map.end()) {
     //         assert(i->first == i2->first);
     //         assert(i->second == i2->second);
-    //         time(map.erase, i = map.erase(i));
-    //         time(map2.erase, i2 = map2.erase(i2));
+    //         time(map.erase, map.erase(i));
+    //         time(map2.erase, map2.erase(i2));
     //       }
     //     } else {
     //       //printf("add %d\n", k);
@@ -247,16 +258,32 @@ int main() {
     //   }
     // }
     // assert(map3 == map2);
+    // printf("ok\n");
 
     //constexpr int mask = 16777215;
     constexpr uint64_t mask = 0xffffffff;
 
+    //uint32_t seed = Clock::now().time_since_epoch().count();
+    uint32_t seed = 0x222d95ca;
+    printf("seed %#x\n", seed);
+    srand(seed);
+
     std::vector<int> ids;
     for (int i = 0; i != 10000000; ++i) {
-      ids.push_back(i + 1);
+      //ids.push_back((i + 1) & 0xffff);
+      ids.push_back(rand());
     }
 
     std::random_shuffle(ids.begin(), ids.end());
+
+    auto ids2 = ids;
+    //std::random_shuffle(ids2.begin(), ids2.end());
+    for (auto i = ids2.begin(); i != ids2.end(); ++i) {
+      if (ids2.end() - i >= 10000) {
+        std::random_shuffle(i, i + 500);
+        i += rand() % 200;
+      }
+    }
 
     // std::vector<int> dummyids;
     // for (int i = 0; i != 10000000; ++i) {
@@ -267,21 +294,45 @@ int main() {
     auto start1 = Clock::now();
     auto start1c = std::chrono::steady_clock::now();
     {
-      auto i2 = ids.begin();
+      size_t maxsize = 0;
+      auto i2 = ids2.begin();
       int n = 0;
       for (auto i = ids.begin(); i != ids.end(); ++i) {
-        time(map.insert, map.try_emplace(*i, *i));
-        ++n;
-        if (n >= 10) {
-          assert(map.find(*i2) != map.end());
-          time(map.erase, map.erase(*i2));
-          ++i2;
+        time(map.insert, map.emplace(*i, *i));
+        maxsize = std::max(maxsize, map.size());
+        while (i2 != ids2.end()) {
+          auto i = map.find(*i2);
+          if (i != map.end()) {
+            map.erase(i);
+            ++i2;
+          } else {
+            break;
+          }
         }
+        // ++n;
+        // if (i > i2 && rand() % 3 != 0) {
+        //   assert(map.find(*i2) != map.end());
+        //   time(map.erase, map.erase(*i2));
+        //   ++i2;
+        // }
       }
+      printf("maxsize %d\n", maxsize);
     }
     assert(map.size() == std::distance(map.begin(), map.end()));
     auto end1 = Clock::now();
     auto end1c = std::chrono::steady_clock::now();
+
+    // auto* groups = map.groups;
+    // auto* end = map.indexGroup(groups, map.ksize);
+    // for (auto* i = groups; i != end; i = map.nextGroup(i)) {
+    //   uint32_t distances = i->ext & 0xfffffff;
+    //   uint8_t maxDistance = i->ext >> 28;
+    //   printf("group %d has distances %#x (max %d)\n", map.groupIndex(groups, i), distances, maxDistance);
+    // }
+
+    // for (auto i = map.begin(); i != map.end(); ++i) {
+    //   printf("  %d %d -> %d\n", i.gi, i.vi, i->first, i->second);
+    // }
 
     // // dummyids.clear();
     // // for (int i = 0; i != 10000000; ++i) {
@@ -346,16 +397,17 @@ int main() {
 
     // assert(vmap1 == vmap2);
 
-    // for (size_t i = 0; i != 1000; ++i) {
-    //   if (names[i]) {
-    //     printf("%s took %g\n", names[i], times[i] / (double)counts[i]);
-    //   }
-    // }
+    for (size_t i = 0; i != 1000; ++i) {
+      if (names[i]) {
+        printf("%s took %g\n", names[i], times[i] / (double)counts[i]);
+      }
+    }
 
+    printf("total time:  map: %gms\n", seconds(end1 - start1) * 1000);
     // printf("total times:  map: %gms  map2: %gms\n", seconds(end1 - start1) * 1000, seconds(end2 - start2) * 1000);
     // printf("total times c:  map: %gms  map2: %gms\n", seconds(end1c - start1c) * 1000, seconds(end2c - start2c) * 1000);
 
-    // printf("map bucket count %ld  size %ld\n", map.bucket_count(), map.size());
+    printf("map bucket count %ld  size %ld\n", map.bucket_count(), map.size());
     // printf("map2 bucket count %ld  size %ld\n", map2.bucket_count(), map2.size());
 
     // int hits = 0;
