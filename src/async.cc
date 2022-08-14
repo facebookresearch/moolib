@@ -282,6 +282,7 @@ struct SchedulerFifoImpl {
     }
 
     if (bestIndex != (size_t)-1) {
+      tlsSearchOffset = bestIndex;
       auto& i = incoming[bestIndex];
       auto& o = outgoing[bestIndex];
       std::lock_guard l(i.mutex);

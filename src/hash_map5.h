@@ -5,12 +5,16 @@
 #include <cstring>
 #include <cassert>
 
-
-#pragma push_macro("likely")
-#pragma push_macro("unlikely")
-
+#if 0
+#define likely(x) x
+#define unlikely(x) x
+//#define aligned(x, alignment) x
+#else
 #define likely(x) __builtin_expect(bool(x), 1)
 #define unlikely(x) __builtin_expect(bool(x), 0)
+
+//#define aligned(x, alignment) (std::remove_reference_t<decltype((x))>)__builtin_assume_aligned((x), alignment)
+#endif
 
 namespace moolib {
 
@@ -313,6 +317,21 @@ public:
       }
       return i->index == ki && i->key == key;
     };
+    // SecondaryItem* b = secondary + ki;
+    // SecondaryItem* e = secondary + ((ki + pv.size) & mask);
+    // SecondaryItem* i = b;`
+    // SecondaryItem* wrap = secondary + bs;
+    // do {
+    //   //printf("look at index %d\n", size_t(i - b) & mask);
+    //   if (i->index == ki && i->key == key) {
+    //     return iterator(this, ki, i - secondary, &i->value);
+    //   }
+    //   ++i;
+    //   if (i == wrap) {
+    //     i = secondary;
+    //   }
+    // } while (i != e);
+    // return iterator(this, ki, i - secondary, nullptr);
 
     size_t s = pv.size;
     size_t endvi = (ki + s) & mask;
@@ -482,5 +501,4 @@ expand:
 
 }
 
-#pragma pop_macro("likely")
-#pragma pop_macro("unlikely")
+#undef unrollSetBits
