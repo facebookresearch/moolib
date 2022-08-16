@@ -2,11 +2,8 @@
 #include "socket.h"
 
 #include "rpc.h"
-#include "intrusive_list.h"
 
 #include "fmt/printf.h"
-
-#include <stdexcept>
 
 #include <limits.h>
 #include <netdb.h>
@@ -18,10 +15,6 @@
 #include <sys/uio.h>
 #include <sys/un.h>
 #include <unistd.h>
-
-#undef assert
-#define assert(x) (bool(x) ? 0 : (printf("assert failure %s:%d\n", __FILE__, __LINE__), std::abort(), 0))
-
 
 namespace rpc {
 
@@ -176,133 +169,6 @@ uint32_t writeFdFlag = 0x413ffc3f;
 
 thread_local SocketImpl* inReadLoop = nullptr;
 
-template<typename T>
-struct WriteData {
-  static constexpr bool isAllocated = true;
-  moolib::IntrusiveListLink<WriteData> link;
-  T* beginptr = nullptr;
-  T* endptr = nullptr;
-  T* dataptr = nullptr;
-  size_t msize = 0;
-  T* data() {
-    return dataptr;
-  }
-  size_t size() const {
-    return msize;
-  }
-  size_t capacity() const {
-    return endptr - dataptr;
-  }
-  bool empty() const {
-    return msize == 0;
-  }
-
-  template<typename... Args>
-  void emplace_back(Args&&... args) {
-    assert(capacity() > msize);
-    new (data() + msize) T(std::forward<Args>(args)...);
-    ++msize;
-  }
-
-  template<typename V>
-  void push_back(V&& v) {
-    emplace_back(std::forward<V>(v));
-  }
-
-  void erase(T* begin, T* end) {
-    if (begin == dataptr) {
-      for (auto* i = begin; i != end; ++i) {
-        i->~T();
-      }
-      dataptr = end;
-      msize -= end - begin;
-      if (msize == 0) {
-        dataptr = beginptr;
-      }
-    } else {
-      throw std::invalid_argument("WriteData::erase");
-    }
-  }
-
-  T* begin() {
-    return dataptr;
-  }
-  T* end() {
-    return dataptr + msize;
-  }
-
-  void clear() {
-    erase(begin(), end());
-    msize = 0;
-    dataptr = beginptr;
-  }
-
-  static WriteData* create(size_t capacity) {
-    WriteData* r = (WriteData*)std::aligned_alloc(std::max(alignof(T), alignof(WriteData)), sizeof(WriteData) + sizeof(T) * capacity);
-    if (!r) {
-      throw std::bad_alloc();
-    }
-    new (r) WriteData();
-    r->beginptr = (T*)(r + 1);
-    r->endptr = r->beginptr + capacity;
-    r->dataptr = r->beginptr;
-    return r;
-  }
-  static void destroy(WriteData* ptr) {
-    ptr->clear();
-    ptr->~WriteData();
-    std::free(ptr);
-  }
-};
-template<typename T>
-struct WriteDataRef {
-  static constexpr bool isAllocated = false;
-  T* ptr = nullptr;
-  size_t msize = 0;
-  T* data() {
-    return ptr;
-  }
-  size_t size() const {
-    return msize;
-  }
-  static void destroy(WriteDataRef*) {}
-};
-
-template<typename T>
-struct WriteDataHandle {
-  static constexpr bool isAllocated = T::isAllocated;
-  T* ptr = nullptr;
-  WriteDataHandle() = default;
-  WriteDataHandle(std::nullptr_t) {}
-  WriteDataHandle(T* ptr) : ptr(ptr) {}
-  WriteDataHandle(const WriteDataHandle&) = delete;
-  WriteDataHandle(WriteDataHandle&& n) {
-    std::swap(ptr, n.ptr);
-  }
-  WriteDataHandle& operator=(const WriteDataHandle&) = delete;
-  WriteDataHandle& operator=(WriteDataHandle&& n) {
-    std::swap(ptr, n.ptr);
-    return *this;
-  }
-  ~WriteDataHandle() {
-    if (ptr) {
-      T::destroy(ptr);
-    }
-  }
-  T& operator*() {
-    return *ptr;
-  }
-  T* operator->() {
-    return ptr;
-  }
-  T* release() {
-    return std::exchange(ptr, nullptr);
-  }
-  explicit operator bool() const {
-    return ptr != nullptr;
-  }
-};
-
 struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   int af = -1;
   int fd = -1;
@@ -310,29 +176,15 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   std::shared_ptr<ResolveHandle> resolveHandle;
   bool addedInPoll = false;
 
-  using WriteCallback = std::pair<size_t, Function<void(Error*)>>;
-
-  using WriteHandle = WriteDataHandle<WriteData<iovec>>;
-  using WriteCallbackHandle = WriteDataHandle<WriteData<WriteCallback>>;
-
   alignas(64) std::atomic_int writeTriggerCount = 0;
   SpinMutex writeQueueMutex;
-  moolib::IntrusiveList<WriteData<iovec>, &WriteData<iovec>::link> queuedWrites;
-  moolib::IntrusiveList<WriteData<WriteCallback>, &WriteData<WriteCallback>::link> queuedWriteCallbacks;
-  // std::vector<iovec> queuedWrites;
-  // std::vector<std::pair<size_t, Function<void(Error*)>>> queuedWriteCallbacks;
+  std::vector<iovec> queuedWrites;
+  std::vector<std::pair<size_t, Function<void(Error*)>>> queuedWriteCallbacks;
   SpinMutex writeMutex;
-  // moolib::IntrusiveList<WriteData<iovec>> newWrites;
-  // moolib::IntrusiveList<WriteData<WriteCallback>> newWriteCallbacks;
-  // moolib::IntrusiveList<WriteData<iovec>> activeWrite;
-  // moolib::IntrusiveList<WriteData<WriteCallback>> activeWriteCallbacks;
-  // std::vector<iovec> newWrites;
-  // std::vector<std::pair<size_t, Function<void(Error*)>>> newWriteCallbacks;
-  // std::vector<iovec> activeWrites;
-  // std::vector<std::pair<size_t, Function<void(Error*)>>> activeWriteCallbacks;
-
-  moolib::IntrusiveList<WriteData<iovec>, &WriteData<iovec>::link> freelistWrites;
-  moolib::IntrusiveList<WriteData<WriteCallback>, &WriteData<WriteCallback>::link> freelistWriteCallbacks;
+  std::vector<iovec> newWrites;
+  std::vector<std::pair<size_t, Function<void(Error*)>>> newWriteCallbacks;
+  std::vector<iovec> activeWrites;
+  std::vector<std::pair<size_t, Function<void(Error*)>>> activeWriteCallbacks;
 
   alignas(64) std::atomic_int readTriggerCount = 0;
   bool wantsRead = false;
@@ -344,27 +196,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   const void* prevReadPtr = nullptr;
   size_t prevReadOffset = 0;
   std::vector<int> receivedFds;
-
-  template<typename T>
-  void reallyClearList(T& list) {
-    while (!list.empty()) {
-      auto& v = list.back();
-      list.pop_back();
-      v.destroy(&v);
-    }
-  }
-
-  // template<typename T>
-  // void clearList(moolib::IntrusiveList<T>& list) {
-  //   auto& freelist = std::is_same_v<T, iovec> ? freelistWrites : freelistWriteCallbacks;
-  //   while (freelist.size() < 16 && !list.empty()) {
-  //     auto& v = list.back();
-  //     v.clear();
-  //     list.pop_back();
-  //     freelist.push_back(v);
-  //   }
-  //   reallyClearList(list);
-  // }
 
   void close() {
     if (closed.exchange(true)) {
@@ -378,8 +209,8 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     onRead = nullptr;
     std::lock_guard l2(writeMutex);
     std::unique_lock l3(writeQueueMutex);
-    reallyClearList(queuedWrites);
-    reallyClearList(queuedWriteCallbacks);
+    queuedWrites.clear();
+    queuedWriteCallbacks.clear();
     if (resolveHandle) {
       resolveHandle = nullptr;
     }
@@ -397,8 +228,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
 
   ~SocketImpl() {
     close();
-    reallyClearList(freelistWrites);
-    reallyClearList(freelistWriteCallbacks);
   }
 
   void listen(std::string_view address) {
@@ -630,12 +459,13 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         ql.unlock();
         return;
       }
-      WriteHandle wh(&queuedWrites.front());
-      WriteCallbackHandle wch(&queuedWriteCallbacks.front());
-      queuedWrites.pop_front();
-      queuedWriteCallbacks.pop_front();
+      activeWrites.clear();
+      activeWriteCallbacks.clear();
+      std::swap(activeWrites, queuedWrites);
+      std::swap(activeWriteCallbacks, queuedWriteCallbacks);
       ql.unlock();
-      bool canWrite = writevImpl(std::move(wh), std::move(wch), ql);
+      bool canWrite = writevImpl(
+          activeWrites.data(), activeWrites.size(), activeWriteCallbacks.data(), activeWriteCallbacks.size(), ql);
       if (!ql.owns_lock()) {
         ql.lock();
       }
@@ -883,17 +713,13 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     }
   }
 
-  template<typename WriteHandleT, typename WriteCallbackHandleT>
-  bool writevImpl(WriteHandleT writes, WriteCallbackHandleT writeCallbacks, std::unique_lock<SpinMutex>& ql) {
+  bool writevImpl(
+      const iovec* vec, size_t veclen, std::pair<size_t, Function<void(Error*)>>* callbacks, size_t callbacksLen,
+      std::unique_lock<SpinMutex>& ql) {
     if (closed.load(std::memory_order_relaxed)) {
       return false;
     }
     TIME(writevImpl);
-
-    const iovec* vec = writes->data();
-    size_t veclen = writes->size();
-    std::pair<size_t, Function<void(Error*)>>* callbacks = writeCallbacks->data();
-    size_t callbacksLen = writeCallbacks->size();
 
     msghdr msg;
     union {
@@ -956,26 +782,16 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       }
       Error ee(std::strerror(e));
       std::move(callbacks[0].second)(&ee);
+      activeWrites.clear();
+      activeWriteCallbacks.clear();
       ql.lock();
-      reallyClearList(queuedWrites);
-      reallyClearList(queuedWriteCallbacks);
+      queuedWrites.clear();
+      queuedWriteCallbacks.clear();
     } else {
-      size_t writtenForCallback = r;
-      WriteCallbackHandle qWriteCallbacks = nullptr;
+      size_t writtenForCallback = 0;
       while (writtenForCallback) {
         if (callbacksLen == 0) {
-          fmt::printf("writev empty callback list");
-          ql.lock();
-          assert(!queuedWriteCallbacks.empty());
-          if constexpr (WriteCallbackHandleT::isAllocated) {
-            writeCallbacks->clear();
-            freelistWriteCallbacks.push_back(*writeCallbacks.release());
-          }
-          qWriteCallbacks = WriteDataHandle(&queuedWriteCallbacks.front());
-          queuedWriteCallbacks.pop_front();
-          ql.unlock();
-          callbacks = qWriteCallbacks->data();
-          callbacksLen = qWriteCallbacks->size();
+          throw Error("writev empty callback list");
         }
         if (writtenForCallback >= callbacks[0].first) {
           writtenForCallback -= callbacks[0].first;
@@ -992,86 +808,45 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         }
         r -= vec[offset].iov_len;
       }
-      if (offset == msg.msg_iovlen) {
+      if (offset == veclen) {
         canWrite = true;
-      }
-      //   ql.lock();
-      //   writes->clear();
-      //   writeCallbacks->clear();
-      //   freelistWrites.push_back(*writes.release());
-      //   fmt::printf("freelistWrites.size() is %d\n", std::distance(freelistWrites.begin(), freelistWrites.end()));
-      //     freelistWriteCallbacks.push_back(*writeCallbacks.release());
-      //   fmt::printf("freelistWriteCallbacks.size() is %d\n", std::distance(freelistWriteCallbacks.begin(), freelistWriteCallbacks.end()));
-      // } else {
-      if constexpr (WriteHandleT::isAllocated) {
-        fmt::printf("erase vec %d (size %d)\n", offset, writes->size());
-        writes->erase(writes->begin(), writes->begin() + offset);
-        assert(writes->size() > 0);
-        if (r) {
-          assert(false);
-          assert(!writes->empty());
-          iovec& v = writes->data()[0];
-          v.iov_base = (char*)v.iov_base + r;
-          v.iov_len = v.iov_len - r;
-        }
-        ql.lock();
-        if (writes->empty()) {
-          freelistWrites.push_back(*writes.release());
-          fmt::printf("freelistWrites.size() is %d\n", std::distance(freelistWrites.begin(), freelistWrites.end()));
-        } else {
-          queuedWrites.push_front(*writes.release());
-        }
+        activeWrites.clear();
+        activeWriteCallbacks.clear();
       } else {
-        fmt::printf("copy vec %d\n", veclen - offset);
-        if (offset != veclen) {
-          WriteHandle newWrites(WriteData<iovec>::create(std::max((size_t)4096, veclen - offset)));
-          for (size_t i = offset; i != veclen; ++i) {
-            if (i == offset) {
-              iovec v;
-              v.iov_base = (char*)vec[i].iov_base + r;
-              v.iov_len = vec[i].iov_len - r;
-              newWrites->push_back(v);
-            } else {
-              newWrites->push_back(vec[i]);
-            }
+        newWrites.clear();
+        newWriteCallbacks.clear();
+        for (size_t i = offset; i != veclen; ++i) {
+          if (i == offset) {
+            iovec v;
+            v.iov_base = (char*)vec[i].iov_base + r;
+            v.iov_len = vec[i].iov_len - r;
+            newWrites.push_back(v);
+          } else {
+            newWrites.push_back(vec[i]);
           }
-          ql.lock();
-          queuedWrites.push_front(*newWrites.release());
         }
-      }
-      if constexpr (WriteCallbackHandleT::isAllocated) {
-        qWriteCallbacks = std::move(writeCallbacks);
-      }
-      if (qWriteCallbacks) {
-        fmt::printf("erase q callbacks %d / %d\n", callbacks - qWriteCallbacks->data(), qWriteCallbacks->size());
-        qWriteCallbacks->erase(qWriteCallbacks->begin(), qWriteCallbacks->begin() + (callbacks - qWriteCallbacks->data()));
-        assert(qWriteCallbacks->size() == callbacksLen);
-        if (callbacksLen) {
-          qWriteCallbacks->data()[0].first -= writtenForCallback;
-        }
-        if (!ql.owns_lock()) {
-          ql.lock();
-        }
-        if (qWriteCallbacks->empty()) {
-          freelistWriteCallbacks.push_back(*qWriteCallbacks.release());
-          fmt::printf("freelistWriteCallbacks.size() is %d\n", std::distance(freelistWriteCallbacks.begin(), freelistWriteCallbacks.end()));
-        } else {
-          queuedWriteCallbacks.push_front(*qWriteCallbacks.release());
-        }
-      } else {
-        fmt::printf("copy %d callbacks\n", callbacksLen);
-        WriteCallbackHandle newWriteCallbacks(WriteData<WriteCallback>::create(std::max((size_t)4096, callbacksLen)));
         for (size_t i = 0; i != callbacksLen; ++i) {
           if (i == 0) {
-            newWriteCallbacks->emplace_back(callbacks[i].first - writtenForCallback, std::move(callbacks[i].second));
+            newWriteCallbacks.emplace_back(callbacks[i].first - writtenForCallback, std::move(callbacks[i].second));
           } else {
-            newWriteCallbacks->push_back(std::move(callbacks[i]));
+            newWriteCallbacks.push_back(std::move(callbacks[i]));
           }
         }
-        if (!ql.owns_lock()) {
-          ql.lock();
+        activeWrites.clear();
+        activeWriteCallbacks.clear();
+        ql.lock();
+        if (!queuedWrites.empty()) {
+          for (auto& v : queuedWrites) {
+            newWrites.push_back(v);
+          }
+          for (auto& v : queuedWriteCallbacks) {
+            newWriteCallbacks.push_back(std::move(v));
+          }
+          queuedWrites.clear();
+          queuedWriteCallbacks.clear();
         }
-        queuedWriteCallbacks.push_front(*newWriteCallbacks.release());
+        std::swap(queuedWrites, newWrites);
+        std::swap(queuedWriteCallbacks, newWriteCallbacks);
       }
     }
 
@@ -1095,13 +870,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         std::pair<size_t, Function<void(Error*)>> p;
         p.first = bytes;
         p.second = std::move(callback);
-        WriteDataRef<const iovec> write;
-        write.ptr = vec;
-        write.msize = veclen;
-        WriteDataRef<WriteCallback> writeCallback;
-        writeCallback.ptr = &p;
-        writeCallback.msize = 1;
-        bool canWrite = writevImpl(WriteDataHandle(&write), WriteDataHandle(&writeCallback), ql);
+        bool canWrite = writevImpl(vec, veclen, &p, 1, ql);
         if (!ql.owns_lock()) {
           ql.lock();
         }
@@ -1129,28 +898,12 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         wl.unlock();
       }
     }
-    WriteData<iovec>* writeData = nullptr;
-    if (!queuedWrites.empty()) {
-      writeData = &queuedWrites.back();
-    }
-    if (!writeData || writeData->capacity() - writeData->size() < veclen) {
-      writeData = WriteData<iovec>::create(std::max((size_t)4096, veclen));
-      queuedWrites.push_back(*writeData);
-    }
     size_t bytes = 0;
     for (size_t i = 0; i != veclen; ++i) {
-      writeData->emplace_back(vec[i]);
+      queuedWrites.push_back(vec[i]);
       bytes += vec[i].iov_len;
     }
-    WriteData<WriteCallback>* writeCallback = nullptr;
-    if (!queuedWriteCallbacks.empty()) {
-      writeCallback = &queuedWriteCallbacks.back();
-    }
-    if (!writeCallback || writeCallback->size() == writeCallback->capacity()) {
-      writeCallback = WriteData<WriteCallback>::create(4096);
-      queuedWriteCallbacks.push_back(*writeCallback);
-    }
-    writeCallback->emplace_back(bytes, std::move(callback));
+    queuedWriteCallbacks.emplace_back(bytes, std::move(callback));
     // bytes = 0;
     // for (auto& v : queuedWrites) {
     //   bytes += v.iov_len;
