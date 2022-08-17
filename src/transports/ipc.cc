@@ -130,7 +130,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
         return;
       case stateZero: {
         if (!socket.read(tmpReadBuffer.data(), 12)) {
-          //fmt::printf("exit after %d - stateZero\n", count);
+          fmt::printf("exit after %d - stateZero\n", count);
           return;
         }
         uint32_t numBuffers, bufferSize;
@@ -163,7 +163,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
       }
       case stateSocketReadSizes: {
         if (!socket.read(bufferSizes.data(), bufferSizes.size() * sizeof(size_t))) {
-          //fmt::printf("exit after %d - stateSocketReadSizes\n", count);
+          fmt::printf("exit after %d - stateSocketReadSizes\n", count);
           return;
         }
         if (bufferSizes[0] !=
@@ -191,7 +191,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
       }
       case stateSocketReadIovecs:
         if (!socket.readv(iovecs.data(), iovecs.size())) {
-          //fmt::printf("exit after %d - stateSocketReadIovecs\n", count);
+          fmt::printf("exit after %d - stateSocketReadIovecs\n", count);
           return;
         } else {
           readState = stateAllDone;

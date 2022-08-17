@@ -1533,7 +1533,7 @@ struct Rpc::Impl {
         switchOnAPI(
             (ConnectionType)s.connectionIndex, [&](auto api) { addLatency<decltype(api)>(*o.peer, now, timeout, 1); });
       }
-      if (now - s.connection->lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::seconds(8)) {
+      if (now - s.connection->lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::seconds(8) && false) {
         log(0, "Closing connection %s to %s due to timeout!\n", connectionTypeName.at(s.connectionIndex), o.peer->name);
         auto& x = o.peer->connections_.at(s.connectionIndex);
         std::lock_guard l(x.mutex);

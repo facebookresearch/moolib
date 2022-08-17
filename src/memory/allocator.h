@@ -9,13 +9,18 @@
 
 #include "synchronization.h"
 
+#include "memfd.h"
+
 #include <array>
 #include <cstddef>
 #include <cstdlib>
 #include <stdlib.h>
 #include <vector>
+#include <algorithm>
 
 namespace rpc {
+
+inline memfd::MemfdAllocator memfdAllocator;
 
 namespace allocimpl {
 
@@ -33,6 +38,7 @@ struct Storage {
   ~Storage() {
     for (Header* ptr = freelist; ptr;) {
       Header* next = ptr->next;
+      //memfdAllocator.deallocate(ptr, ptr->capacity + sizeof(Header));
       std::free(ptr);
       ptr = next;
     }
@@ -56,23 +62,27 @@ struct Storage {
       r = (Header*)aligned_alloc(64, size);
       new (r) Header();
       r->capacity = size - sizeof(Header);
+      // auto a = memfdAllocator.allocate(size);
+      // r = (Header*)a.first;
+      // new (r) Header();
+      // r->capacity = a.second - sizeof(Header);
     } else {
       --freelistSize;
       freelist = r->next;
-      if (r->capacity != size - sizeof(Header)) {
-        std::abort();
-      }
-      if (r->refcount != 0) {
+      if (r->capacity < size - sizeof(Header)) {
+        printf("cap mismatch\n");
         std::abort();
       }
     }
     if (r->refcount != 0) {
+      printf("alloc refcount is %d\n", (int)r->refcount);
       std::abort();
     }
     return r;
   }
   void deallocate(Header* ptr) {
     if (ptr->refcount != 0) {
+      printf("ptr->refcount is %d\n", (int)ptr->refcount);
       std::abort();
     }
     if (freelistSize >= std::min<size_t>(1024 * 1024 / Size, 128)) {
@@ -95,9 +105,25 @@ struct Storage {
 
 } // namespace allocimpl
 
+inline std::unordered_map<size_t, size_t> allocsizes;
+inline std::mutex allocmutex;
+inline size_t nAllocs = 0;
+
 template<typename Header, typename Data>
 Header* allocate(size_t n) {
-
+  std::lock_guard l(allocmutex);
+  allocsizes[n] += 1;
+  if (++nAllocs % 1000000 == 0) {
+    printf("%d allocations (sizeof Header %d)\n", nAllocs, sizeof(Header));
+    std::vector<std::pair<size_t, size_t>> sorted;
+    for (auto& [k, v] : allocsizes) {
+      sorted.emplace_back(v, k);
+    }
+    std::sort(sorted.begin(), sorted.end());
+    for (auto& [v, k] : sorted) {
+      printf(" %d  x%d\n", k, v);
+    }
+  }
   constexpr size_t overhead = sizeof(Header);
   if (n + overhead <= 64) {
     return allocimpl::Storage<Header, Data, 64>::get().allocate();
@@ -111,30 +137,32 @@ Header* allocate(size_t n) {
     Header* h = (Header*)aligned_alloc(64, (sizeof(Header) + sizeof(Data) * n + 63) / 64 * 64);
     new (h) Header();
     h->capacity = n;
+    // auto a = memfdAllocator.allocate((sizeof(Header) + sizeof(Data) * n + 63) / 64 * 64);
+    // Header* h = (Header*)a.first;
+    // new (h) Header();
+    // h->capacity = a.second - sizeof(Header);
     return h;
   }
 }
 template<typename Header, typename Data>
 void deallocate(Header* ptr) {
   const size_t n = ptr->capacity + sizeof(Header);
-  switch (n) {
-  case 64:
+  if (n < 256) {
     allocimpl::Storage<Header, Data, 64>::get().deallocate(ptr);
-    break;
-  case 256:
+  } else if (n < 1024) {
     allocimpl::Storage<Header, Data, 256>::get().deallocate(ptr);
-    break;
-  case 1024:
+  } else if (n < 4096) {
     allocimpl::Storage<Header, Data, 1024>::get().deallocate(ptr);
-    break;
-  case 4096:
+  } else if (n <= 4096 + 1024) {
     allocimpl::Storage<Header, Data, 4096>::get().deallocate(ptr);
-    break;
-  default:
+  } else {
+    printf("n is %d\n", n); 
     if (n <= 4096 || ptr->refcount != 0) {
+      printf("large dealloc refcount %d\n", (int)ptr->refcount);
       std::abort();
     }
     std::free(ptr);
+    //memfdAllocator.deallocate(ptr, ptr->capacity + sizeof(Header));
   }
 }
 template<typename Data, typename Header>
