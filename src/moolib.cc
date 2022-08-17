@@ -1175,10 +1175,18 @@ struct RpcWrapper {
   auto async(
       std::string_view peerName, std::string_view functionName, std::optional<py::args> args,
       std::optional<py::kwargs> kwargs) {
+    //ENABLE_TIME();
+    TIME(async);
+    TIME(asyncSerialize);
     auto buffer = rpc->serializeArguments(args, kwargs);
-    py::gil_scoped_release gil;
+    ENDTIME(asyncSerialize);
+    TIME(asyncReleaseGil);
+    TIME(asyncPreGil);
+    //py::gil_scoped_release gil;
+    ENDTIME(asyncReleaseGil);
     Promise<FutureWrapper> promise;
     auto future = promise.getFuture();
+    TIME(callAsyncCallback);
     rpc->asyncCallback<GilWrapper<py::object>>(
         peerName, functionName,
         [promise = std::move(promise)](GilWrapper<py::object>* r, rpc::Error* error) mutable noexcept {
@@ -1189,6 +1197,25 @@ struct RpcWrapper {
           }
         },
         buffer);
+    ENDTIME(callAsyncCallback);
+    thread_local int counter = 0;
+    if (++counter % 10000 == 0) {
+      uint64_t maxvalue = 0;
+      for (size_t i = 0; i != rpc::times.size(); ++i) {
+        if (rpc::times[i] > maxvalue) {
+          maxvalue = rpc::times[i];
+        }
+      }
+      std::string str;
+      for (size_t i = 0; i != rpc::times.size(); ++i) {
+        if (rpc::times[i] > 0) {
+          str += fmt::sprintf("%s: %d (%g%%)\n", rpc::names[i], rpc::times[i], rpc::times[i] / (double)maxvalue * 100);
+        }
+      }
+      fmt::printf("%s", str);
+      std::memset(&rpc::times, 0, sizeof(rpc::times));
+    }
+    TIME(asyncReturn);
     return future;
   }
 

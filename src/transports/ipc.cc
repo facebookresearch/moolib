@@ -143,9 +143,18 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
           readState = -1;
           Error e("bad signature");
           readCallback(&e, nullptr);
-          fmt::printf("exit after %d - bad sig\n", count);
+          fmt::printf("exit after %d - bad sig\n", count);\
+          std::abort();
           return;
         }
+        // if (numBuffers == 0 || numBuffers > 20) {
+        //   fmt::printf("exit after %d - bad numbuffers %#x\n", count, numBuffers);
+        //   std::abort();
+        // }
+        // if (bufferSize > 1000) {
+        //   fmt::printf("exit after %d - bad bufferSize %#x\n", count, bufferSize);
+        //   std::abort();
+        // }
         buffer = makeBuffer(bufferSize, numBuffers - 1);
         bufferSizes.clear();
         bufferSizes.resize(numBuffers);
@@ -154,7 +163,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
       }
       case stateSocketReadSizes: {
         if (!socket.read(bufferSizes.data(), bufferSizes.size() * sizeof(size_t))) {
-          fmt::printf("exit after %d - stateSocketReadSizes\n", count);
+          //fmt::printf("exit after %d - stateSocketReadSizes\n", count);
           return;
         }
         if (bufferSizes[0] !=
@@ -163,6 +172,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
           Error e("bad buffer size");
           readCallback(&e, nullptr);
           fmt::printf("exit after %d - bad sizes\n", count);
+          std::abort();
           return;
         }
         allocators.clear();
@@ -181,7 +191,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
       }
       case stateSocketReadIovecs:
         if (!socket.readv(iovecs.data(), iovecs.size())) {
-          fmt::printf("exit after %d - stateSocketReadIovecs\n", count);
+          //fmt::printf("exit after %d - stateSocketReadIovecs\n", count);
           return;
         } else {
           readState = stateAllDone;

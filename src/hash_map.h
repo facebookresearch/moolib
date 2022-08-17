@@ -12,6 +12,9 @@
 #define likely(x) __builtin_expect(bool(x), 1)
 #define unlikely(x) __builtin_expect(bool(x), 0)
 
+#undef assert
+#define assert(x) (bool(x) ? 0 : (printf("assert failure %s:%d\n", __FILE__, __LINE__), std::abort(), 0))
+
 namespace moolib {
 
 static constexpr int8_t none = -1;
@@ -195,6 +198,9 @@ public:
     auto mask = ksize - 1;
     size_t ki = i.ki;
     size_t vi = i.vi;
+    assert(i.v);
+    assert(ki < ksize);
+    assert(isNone(i.vi) || vi < ksize);
     assert(msize > 0);
     --msize;
     auto* primary = this->primary;
@@ -206,6 +212,7 @@ public:
         --s;
         size_t index = (ki + s) & mask;
         auto& sv = secondary[index];
+        assert(sv.index == ki);
         sv.index = none;
         pv.key = std::move(sv.key);
         pv.value = std::move(sv.value);
@@ -221,6 +228,7 @@ public:
       pv.size = none;
       pv.key.~Key();
       pv.value.~Value();
+      assert(i == end() || (isNone(i.vi) ? !isNone(primary[i.ki].size) : !isNone(secondary[i.vi].index)));
       return i;
     } else {
       auto& sv = secondary[vi];
@@ -229,8 +237,10 @@ public:
       }
       auto& pv = primary[ki];
       size_t s = pv.size - 1;
+      assert(pv.size > 0 && ((vi - ki) & mask) <= s);
       size_t lastIndex = (ki + s) & mask;
       auto& lv = secondary[lastIndex];
+      assert(lv.index == ki);
       if (lastIndex == vi) {
         ++i;
       } else {
@@ -244,6 +254,7 @@ public:
         --s;
       }
       pv.size = s;
+      assert(i == end() || (isNone(i.vi) ? !isNone(primary[i.ki].size) : !isNone(secondary[i.vi].index)));
       return i;
     }
   }
@@ -258,7 +269,7 @@ public:
       printf("bucket count is not a multiple of 2!\n");
       std::abort();
     }
-    //printf("rehash %d %d\n", newBs, size());
+    printf("rehash %d %d\n", newBs, size());
     PrimaryItem* oldPrimary = primary;
     SecondaryItem* oldSecondary = secondary;
     
@@ -446,7 +457,7 @@ expand:
       goto resize;
     } else {
       size_t mask = ksize - 1;
-      size_t s = uint8_t(pv.size + 1);
+      size_t s = pv.size + 1;
       size_t index = i.vi;
       while (!isNone(secondary[index].index)) {
         index = (index + 1) & mask;

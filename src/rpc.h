@@ -59,10 +59,10 @@ struct TimexEnabler {
   }
 };
 
-#define TIME(name) //rpc::Timex timer__##name(__LINE__, #name);
-#define ENDTIME(name) //timer__##name.done();
+#define TIME(name) rpc::Timex timer__##name(__LINE__, #name);
+#define ENDTIME(name) timer__##name.done();
 
-#define ENABLE_TIME() //rpc::TimexEnabler __timer__enabler;
+#define ENABLE_TIME() rpc::TimexEnabler __timer__enabler;
 
 struct Error : std::exception {
   std::string str;

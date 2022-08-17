@@ -169,9 +169,12 @@ struct SchedulerFifoImpl {
           break;
         }
         if (spinCount >= (1 << 12) + 256) {
-          int ms = sleeping ? 5 : 0;
+          int ms = sleeping ? 250 : 0;
           sleeping = true;
           o.sleeping.store(&t->sem, std::memory_order_relaxed);
+          if (i.req.load(std::memory_order_acquire) != ack) {
+            break;
+          }
           t->sem.wait_for(std::chrono::milliseconds(ms));
         }
       }
