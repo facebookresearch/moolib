@@ -1,9 +1,10 @@
 
 #include "socket.h"
 
+#include "fmt/printf.h"
 #include "rpc.h"
 
-#include "fmt/printf.h"
+#include <type_traits>
 
 #include <limits.h>
 #include <netdb.h>
@@ -121,6 +122,159 @@ static std::pair<std::string_view, int> decodeIpAddress(std::string_view address
   return {hostname, port};
 }
 
+template<typename T>
+struct Container {
+  T* storagebegin = nullptr;
+  T* storageend = nullptr;
+  T* beginptr = nullptr;
+  T* endptr = nullptr;
+  size_t msize = 0;
+  Container() = default;
+  Container(const Container&) = delete;
+  Container(Container&& n) {
+    *this = std::move(n);
+  }
+  ~Container() {
+    if (beginptr != endptr) {
+      clear();
+    }
+    if (storagebegin) {
+      std::free(storagebegin);
+    }
+  }
+  Container& operator=(const Container&) = delete;
+  Container& operator=(Container&& n) {
+    std::swap(storagebegin, n.storagebegin);
+    std::swap(storageend, n.storageend);
+    std::swap(beginptr, n.beginptr);
+    std::swap(endptr, n.endptr);
+    std::swap(msize, n.msize);
+    return *this;
+  }
+  size_t size() {
+    return msize;
+  }
+  T* data() {
+    return beginptr;
+  }
+  T* begin() {
+    return beginptr;
+  }
+  T* end() {
+    return endptr;
+  }
+  T& operator[](size_t index) {
+    return beginptr[index];
+  }
+  void clear() noexcept {
+    erase(begin(), end());
+  }
+  void move(T* dst, T* begin, T* end) noexcept {
+    if constexpr (std::is_trivially_copyable_v<T>) {
+      std::memmove((void*)dst, (void*)begin, (end - begin) * sizeof(T));
+    } else {
+      if (dst <= begin) {
+        for (auto* i = begin; i != end;) {
+          *dst = std::move(*i);
+          ++dst;
+          ++i;
+        }
+      } else {
+        auto* dsti = dst + (end - begin);
+        for (auto* i = end; i != begin;) {
+          --dsti;
+          --i;
+          *dsti = std::move(*i);
+        }
+      }
+    }
+  }
+  void erase(T* begin, T* end) noexcept {
+    for (auto* i = begin; i != end; ++i) {
+      i->~T();
+    }
+    size_t n = end - begin;
+    msize -= n;
+    if (begin == beginptr) {
+      beginptr = end;
+      if (beginptr != endptr) {
+        size_t unused = beginptr - storagebegin;
+        if (unused > msize && unused >= 1024 * 512 / sizeof(T)) {
+          if constexpr (std::is_trivially_copyable_v<T>) {
+            move(storagebegin, beginptr, endptr);
+          } else {
+            auto* sbi = storagebegin;
+            auto* bi = beginptr;
+            while (sbi != beginptr && bi != endptr) {
+              new (sbi) T(std::move(*bi));
+              ++sbi;
+              ++bi;
+            }
+            move(sbi, bi, endptr);
+            for (auto* i = bi; i != endptr; ++i) {
+              i->~T();
+            }
+          }
+          beginptr = storagebegin;
+          endptr = beginptr + msize;
+        }
+      }
+    } else {
+      move(begin, end, endptr);
+      for (auto* i = end; i != endptr; ++i) {
+        i->~T();
+      }
+      endptr -= n;
+    }
+    if (beginptr == endptr) {
+      beginptr = storagebegin;
+      endptr = beginptr;
+    }
+  }
+  bool empty() const {
+    return beginptr == endptr;
+  }
+  size_t capacity() {
+    return storageend - storagebegin;
+  }
+  void reserve(size_t n) noexcept {
+    if (n <= capacity()) {
+      return;
+    }
+    T* newptr = (T*)std::aligned_alloc(alignof(T), sizeof(T) * n);
+    if (storagebegin) {
+      T* dst = newptr;
+      for (T* i = beginptr; i != endptr; ++i) {
+        new (dst) T(std::move(*i));
+        i->~T();
+        ++dst;
+      }
+      std::free(storagebegin);
+    }
+    storagebegin = newptr;
+    storageend = newptr + n;
+    beginptr = newptr;
+    endptr = newptr + msize;
+  }
+  void expand() {
+    reserve(std::max(capacity() * 2, (size_t)16));
+  }
+  template<typename V>
+  void push_back(V&& v) {
+    emplace_back(std::forward<V>(v));
+  }
+  template<typename... Args>
+  void emplace_back(Args&&... args) noexcept {
+    if (endptr == storageend) {
+      [[unlikely]];
+      expand();
+    }
+    new (endptr) T(std::forward<Args>(args)...);
+    ++endptr;
+    ++msize;
+  }
+};
+
 uint32_t writeFdFlag = 0x413ffc3f;
 
 thread_local SocketImpl* inReadLoop = nullptr;
@@ -134,13 +288,13 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
 
   alignas(64) std::atomic_int writeTriggerCount = 0;
   SpinMutex writeQueueMutex;
-  std::vector<iovec> queuedWrites;
-  std::vector<std::pair<size_t, Function<void(Error*)>>> queuedWriteCallbacks;
+  Container<iovec> queuedWrites;
+  Container<std::pair<size_t, Function<void(Error*)>>> queuedWriteCallbacks;
   SpinMutex writeMutex;
-  std::vector<iovec> newWrites;
-  std::vector<std::pair<size_t, Function<void(Error*)>>> newWriteCallbacks;
-  std::vector<iovec> activeWrites;
-  std::vector<std::pair<size_t, Function<void(Error*)>>> activeWriteCallbacks;
+  Container<iovec> newWrites;
+  Container<std::pair<size_t, Function<void(Error*)>>> newWriteCallbacks;
+  Container<iovec> activeWrites;
+  Container<std::pair<size_t, Function<void(Error*)>>> activeWriteCallbacks;
 
   alignas(64) std::atomic_int readTriggerCount = 0;
   bool wantsRead = false;
@@ -184,7 +338,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   }
 
   void listen(std::string_view address) {
-    std::unique_lock l(writeMutex);
+    std::unique_lock wl(writeMutex);
     if (closed.load(std::memory_order_relaxed)) {
       return;
     }
@@ -203,7 +357,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         throw std::system_error(errno, std::generic_category());
       }
     } else if (af == AF_INET) {
-      l.unlock();
+      wl.unlock();
       int port = 0;
       std::tie(address, port) = decodeIpAddress(address);
       auto h =
@@ -211,6 +365,8 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
             if (e) {
               throw *e;
             } else {
+              std::unique_lock wl(writeMutex);
+              std::unique_lock rl(readMutex);
               std::string errors;
               int tries = 0;
               for (auto* i = aix; i; i = i->ai_next) {
@@ -255,7 +411,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
               throw Error(std::move(errors));
             }
           });
-      l.lock();
+      wl.lock();
       resolveHandle = std::move(h);
     } else {
       throw Error("listen: unkown address family\n");
@@ -294,7 +450,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
           s.impl->setTcpSockOpts();
           poll::add(s.impl);
           callback(nullptr, std::move(s));
-          triggerRead();
         }
       }
     };
@@ -435,7 +590,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   }
 
   void setOnRead(Function<void(Error*, std::unique_lock<SpinMutex>* lock)> callback) {
-    std::lock_guard l(readMutex);
+    std::unique_lock l(readMutex);
     if (closed.load(std::memory_order_relaxed)) {
       return;
     }
@@ -443,18 +598,17 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       throw Error("onRead callback is already set");
     }
     onRead = std::move(callback);
-    if (readTriggerCount.load(std::memory_order_relaxed)) {
-      triggerRead();
-    }
+    l.unlock();
+    triggerRead();
   }
 
   bool read(void* dst, size_t size) {
-    if (closed.load(std::memory_order_relaxed)) {
+    if (closed.load(std::memory_order_relaxed) || fd == -1) {
       wantsRead = false;
       return false;
     }
     if (readBuffer.empty()) {
-      readBuffer.resize(4096);
+      readBuffer.resize(65536);
     }
     if (prevReadPtr != dst) {
       prevReadPtr = dst;
@@ -481,10 +635,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     readIovecs[0].iov_len = size - prevReadOffset;
     readIovecs[1].iov_base = readBuffer.data() + readBufferOffset;
     readIovecs[1].iov_len = readBuffer.size() - readBufferFilled;
-    if (readIovecs[0].iov_len == 0 || readIovecs[0].iov_len > size || readIovecs[1].iov_len == 0 ||
-        readIovecs[1].iov_len > readBuffer.size()) {
-      throw std::runtime_error("read bad iovec");
-    }
     msghdr msg = {0};
     union {
       char buf[CMSG_SPACE(sizeof(int))];
@@ -498,14 +648,15 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     ssize_t r = ::recvmsg(fd, &msg, MSG_CMSG_CLOEXEC);
     wantsRead = r == readIovecs[0].iov_len + readIovecs[1].iov_len;
     if (r == -1) {
-      if (errno == EINTR) {
+      int error = errno;
+      if (error == EINTR) {
         wantsRead = true;
         return false;
       }
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      if (error == EAGAIN || error == EWOULDBLOCK || error == ENOTCONN) {
         return false;
       }
-      Error e(std::strerror(errno));
+      Error e(std::strerror(error));
       if (onRead) {
         onRead(&e, nullptr);
       }
@@ -540,7 +691,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   }
 
   bool readv(const iovec* vec, size_t veclen) {
-    if (closed.load(std::memory_order_relaxed)) {
+    if (closed.load(std::memory_order_relaxed) || fd == -1) {
       wantsRead = false;
       return false;
     }
@@ -583,21 +734,23 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     }
 
     size_t left = prevReadOffset;
-    for (size_t i = 0;; ++i) {
-      if (i == veclen) {
-        throw std::runtime_error("readv skipped entire buffer");
-      }
-      if (left < vec[i].iov_len) {
-        vec = &vec[i];
-        veclen -= i;
-        iovecbackup = *vec;
-        restoreIovecBackup = true;
-        iovec* v = (iovec*)vec;
-        v[0].iov_base = (char*)v[0].iov_base + left;
-        v[0].iov_len -= left;
-        break;
-      } else {
-        left -= vec[i].iov_len;
+    if (left) {
+      for (size_t i = 0;; ++i) {
+        if (i == veclen) {
+          throw std::runtime_error("readv skipped entire buffer");
+        }
+        if (left < vec[i].iov_len) {
+          vec = &vec[i];
+          veclen -= i;
+          iovecbackup = *vec;
+          restoreIovecBackup = true;
+          iovec* v = (iovec*)vec;
+          v[0].iov_base = (char*)v[0].iov_base + left;
+          v[0].iov_len -= left;
+          break;
+        } else {
+          left -= vec[i].iov_len;
+        }
       }
     }
 
@@ -606,8 +759,13 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       bytes += vec[i].iov_len;
     }
 
+    msghdr msg = {0};
+    msg.msg_iov = (::iovec*)vec;
+    msg.msg_iovlen = std::min(veclen, (size_t)IOV_MAX);
+    msg.msg_control = nullptr;
+    msg.msg_controllen = 0;
     readTriggerCount.store(-0xffff, std::memory_order_relaxed);
-    ssize_t r = ::readv(fd, (::iovec*)vec, veclen);
+    ssize_t r = ::recvmsg(fd, &msg, 0);
     if (restoreIovecBackup) {
       *(iovec*)vec = iovecbackup;
       vec = ovec;
@@ -615,11 +773,12 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     }
     wantsRead = r == bytes;
     if (r == -1) {
-      if (errno == EINTR) {
+      int error = errno;
+      if (error == EINTR) {
         wantsRead = true;
         return false;
       }
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      if (error == EAGAIN || error == EWOULDBLOCK || error == ENOTCONN) {
         return false;
       }
       Error e(std::strerror(errno));
@@ -694,13 +853,13 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       int e = errno;
       if (e == EAGAIN || e == EWOULDBLOCK) {
         r = 0;
+      } else if (e == EINTR) {
+        r = 0;
+        canWrite = true;
       }
     }
     if (r == -1) {
       int e = errno;
-      if (e == EINTR) {
-        canWrite = true;
-      }
       Error ee(std::strerror(e));
       std::move(callbacks[0].second)(&ee);
       activeWrites.clear();
@@ -709,7 +868,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       queuedWrites.clear();
       queuedWriteCallbacks.clear();
     } else {
-      size_t writtenForCallback = 0;
+      size_t writtenForCallback = r;
       while (writtenForCallback) {
         if (callbacksLen == 0) {
           throw Error("writev empty callback list");
@@ -729,6 +888,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         }
         r -= vec[offset].iov_len;
       }
+      canWrite = offset == msg.msg_iovlen;
       if (offset == veclen) {
         canWrite = true;
         activeWrites.clear();
@@ -736,21 +896,40 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       } else {
         newWrites.clear();
         newWriteCallbacks.clear();
-        for (size_t i = offset; i != veclen; ++i) {
-          if (i == offset) {
-            iovec v;
-            v.iov_base = (char*)vec[i].iov_base + r;
-            v.iov_len = vec[i].iov_len - r;
-            newWrites.push_back(v);
-          } else {
-            newWrites.push_back(vec[i]);
+        if (vec == activeWrites.data() && veclen == activeWrites.size()) {
+          activeWrites.erase(activeWrites.begin(), activeWrites.begin() + offset);
+          if (r) {
+            iovec& v = activeWrites[0];
+            v.iov_base = (char*)v.iov_base + r;
+            v.iov_len = v.iov_len - r;
+          }
+          std::swap(newWrites, activeWrites);
+        } else {
+          for (size_t i = offset; i != veclen; ++i) {
+            if (i == offset) {
+              iovec v;
+              v.iov_base = (char*)vec[i].iov_base + r;
+              v.iov_len = vec[i].iov_len - r;
+              newWrites.push_back(v);
+            } else {
+              newWrites.push_back(vec[i]);
+            }
           }
         }
-        for (size_t i = 0; i != callbacksLen; ++i) {
-          if (i == 0) {
-            newWriteCallbacks.emplace_back(callbacks[i].first - writtenForCallback, std::move(callbacks[i].second));
-          } else {
-            newWriteCallbacks.push_back(std::move(callbacks[i]));
+        if (callbacks + callbacksLen == activeWriteCallbacks.data() + activeWriteCallbacks.size()) {
+          activeWriteCallbacks.erase(
+              activeWriteCallbacks.begin(), activeWriteCallbacks.begin() + (callbacks - activeWriteCallbacks.data()));
+          if (writtenForCallback) {
+            activeWriteCallbacks[0].first -= writtenForCallback;
+          }
+          std::swap(newWriteCallbacks, activeWriteCallbacks);
+        } else {
+          for (size_t i = 0; i != callbacksLen; ++i) {
+            if (i == 0) {
+              newWriteCallbacks.emplace_back(callbacks[i].first - writtenForCallback, std::move(callbacks[i].second));
+            } else {
+              newWriteCallbacks.push_back(std::move(callbacks[i]));
+            }
           }
         }
         activeWrites.clear();
