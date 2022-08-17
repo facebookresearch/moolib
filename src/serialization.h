@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "buffer.h"
+#include "memory/buffer.h"
 #include "hash_map.h"
 
 #include <cstddef>

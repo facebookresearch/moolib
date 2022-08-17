@@ -7,9 +7,9 @@
 
 #pragma once
 
-#include "allocator.h"
+#include "memory/allocator.h"
 #include "async.h"
-#include "buffer.h"
+#include "memory/buffer.h"
 #include "function.h"
 #include "serialization.h"
 #include "synchronization.h"
