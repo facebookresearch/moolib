@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
 
 #include "socket.h"
 
@@ -545,10 +551,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       std::unique_lock wl(writeMutex, std::try_to_lock);
       if (wl.owns_lock()) {
         std::unique_lock ql(writeQueueMutex);
-        size_t bytes = 0;
-        for (auto& v : queuedWrites) {
-          bytes += v.iov_len;
-        }
         writeLoop(wl, ql);
       }
     });
