@@ -189,9 +189,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
         readState = stateZero;
 
         auto buf = std::move(buffer);
-        lock->unlock();
         callback(nullptr, std::move(buf));
-        lock->lock();
         break;
       }
       }
