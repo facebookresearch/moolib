@@ -325,9 +325,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       resolveHandle = nullptr;
     }
     if (fd != -1) {
-      if (::close(fd)) {
-        perror("close");
-      }
+      ::close(fd);
       fd = -1;
     }
     for (auto v : receivedFds) {
@@ -816,7 +814,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     if (closed.load(std::memory_order_relaxed)) {
       return false;
     }
-    TIME(writevImpl);
 
     msghdr msg;
     union {
@@ -961,7 +958,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   }
 
   void writev(const iovec* vec, size_t veclen, Function<void(Error*)> callback) {
-    TIME(writev);
     std::unique_lock ql(writeQueueMutex);
     if (closed.load(std::memory_order_relaxed)) {
       return;
