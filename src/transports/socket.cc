@@ -1,9 +1,10 @@
 
 #include "socket.h"
 
+#include "fmt/printf.h"
 #include "rpc.h"
 
-#include "fmt/printf.h"
+#include <type_traits>
 
 #include <limits.h>
 #include <netdb.h>
@@ -37,47 +38,6 @@ struct ResolveHandle {
   }
 };
 
-template<typename Duration>
-static float seconds(Duration duration) {
-  return std::chrono::duration_cast<std::chrono::duration<float, std::ratio<1, 1>>>(duration).count();
-}
-
-
-std::once_flag scheduleFlag;
-void scheduleTest() {
-
-  for (int i = 0; i != 10; ++i) {
-    auto start = std::chrono::steady_clock::now();
-    auto now = std::chrono::steady_clock::now();
-    //fmt::printf("plain clock overhead is %f\n", seconds(now - start) * 1000);
-
-    std::atomic_int doneCount = 0;
-    constexpr int N = 1000;
-
-    auto scheduleTime = std::chrono::steady_clock::now();
-    for (int i = 0; i != N; ++i) {
-      scheduler.run([&, scheduleTime]() {
-        //std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        //fmt::printf("%d scheduled in %g\n", i, seconds(now - scheduleTime) * 1000);
-        auto now = std::chrono::steady_clock::now();
-        if (++doneCount == N) {
-          float t = seconds(now - start);
-          fmt::printf("everything done in %g (%g/s)\n", t * 1000, N / t);
-        }
-      });
-    }
-
-    now = std::chrono::steady_clock::now();
-    float t = seconds(now - start);
-    fmt::printf("run took %g (%g/s)\n", t * 1000, N / t);
-
-    //while (doneCount < N) std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  }
-
-  std::exit(0);
-
-}
-
 template<typename F>
 std::shared_ptr<ResolveHandle> resolveIpAddress(std::string_view address, int port, bool asynchronous, F&& callback) {
   auto h = std::make_shared<ResolveHandle>();
@@ -88,8 +48,6 @@ std::shared_ptr<ResolveHandle> resolveIpAddress(std::string_view address, int po
   h->req.ar_request = nullptr;
 
   h->callback = std::move(callback);
-
-  //std::call_once(scheduleFlag, scheduleTest);
 
   Function<void()> f = [asynchronous, wh = std::weak_ptr<ResolveHandle>(h)]() {
     auto h = wh.lock();
@@ -105,7 +63,7 @@ std::shared_ptr<ResolveHandle> resolveIpAddress(std::string_view address, int po
         Error e(std::move(str));
         h->callback(&e, nullptr);
       }
-    } else fmt::printf("h is null\n");
+    }
   };
 
   memset(&h->sevp, 0, sizeof(h->sevp));
@@ -116,7 +74,6 @@ std::shared_ptr<ResolveHandle> resolveIpAddress(std::string_view address, int po
   int r;
   do {
     r = getaddrinfo_a(asynchronous ? GAI_NOWAIT : GAI_WAIT, &ptr, 1, &h->sevp);
-    //fmt::printf("getaddrinfo_a returned %d\n", r);
   } while (r == EAI_INTR);
   if (r) {
     Function<void()>{(FunctionPointer)h->sevp.sigev_value.sival_ptr};
@@ -165,6 +122,159 @@ static std::pair<std::string_view, int> decodeIpAddress(std::string_view address
   return {hostname, port};
 }
 
+template<typename T>
+struct Container {
+  T* storagebegin = nullptr;
+  T* storageend = nullptr;
+  T* beginptr = nullptr;
+  T* endptr = nullptr;
+  size_t msize = 0;
+  Container() = default;
+  Container(const Container&) = delete;
+  Container(Container&& n) {
+    *this = std::move(n);
+  }
+  ~Container() {
+    if (beginptr != endptr) {
+      clear();
+    }
+    if (storagebegin) {
+      std::free(storagebegin);
+    }
+  }
+  Container& operator=(const Container&) = delete;
+  Container& operator=(Container&& n) {
+    std::swap(storagebegin, n.storagebegin);
+    std::swap(storageend, n.storageend);
+    std::swap(beginptr, n.beginptr);
+    std::swap(endptr, n.endptr);
+    std::swap(msize, n.msize);
+    return *this;
+  }
+  size_t size() {
+    return msize;
+  }
+  T* data() {
+    return beginptr;
+  }
+  T* begin() {
+    return beginptr;
+  }
+  T* end() {
+    return endptr;
+  }
+  T& operator[](size_t index) {
+    return beginptr[index];
+  }
+  void clear() noexcept {
+    erase(begin(), end());
+  }
+  void move(T* dst, T* begin, T* end) noexcept {
+    if constexpr (std::is_trivially_copyable_v<T>) {
+      std::memmove((void*)dst, (void*)begin, (end - begin) * sizeof(T));
+    } else {
+      if (dst <= begin) {
+        for (auto* i = begin; i != end;) {
+          *dst = std::move(*i);
+          ++dst;
+          ++i;
+        }
+      } else {
+        auto* dsti = dst + (end - begin);
+        for (auto* i = end; i != begin;) {
+          --dsti;
+          --i;
+          *dsti = std::move(*i);
+        }
+      }
+    }
+  }
+  void erase(T* begin, T* end) noexcept {
+    for (auto* i = begin; i != end; ++i) {
+      i->~T();
+    }
+    size_t n = end - begin;
+    msize -= n;
+    if (begin == beginptr) {
+      beginptr = end;
+      if (beginptr != endptr) {
+        size_t unused = beginptr - storagebegin;
+        if (unused > msize && unused >= 1024 * 512 / sizeof(T)) {
+          if constexpr (std::is_trivially_copyable_v<T>) {
+            move(storagebegin, beginptr, endptr);
+          } else {
+            auto* sbi = storagebegin;
+            auto* bi = beginptr;
+            while (sbi != beginptr && bi != endptr) {
+              new (sbi) T(std::move(*bi));
+              ++sbi;
+              ++bi;
+            }
+            move(sbi, bi, endptr);
+            for (auto* i = bi; i != endptr; ++i) {
+              i->~T();
+            }
+          }
+          beginptr = storagebegin;
+          endptr = beginptr + msize;
+        }
+      }
+    } else {
+      move(begin, end, endptr);
+      for (auto* i = end; i != endptr; ++i) {
+        i->~T();
+      }
+      endptr -= n;
+    }
+    if (beginptr == endptr) {
+      beginptr = storagebegin;
+      endptr = beginptr;
+    }
+  }
+  bool empty() const {
+    return beginptr == endptr;
+  }
+  size_t capacity() {
+    return storageend - storagebegin;
+  }
+  void reserve(size_t n) noexcept {
+    if (n <= capacity()) {
+      return;
+    }
+    T* newptr = (T*)std::aligned_alloc(alignof(T), sizeof(T) * n);
+    if (storagebegin) {
+      T* dst = newptr;
+      for (T* i = beginptr; i != endptr; ++i) {
+        new (dst) T(std::move(*i));
+        i->~T();
+        ++dst;
+      }
+      std::free(storagebegin);
+    }
+    storagebegin = newptr;
+    storageend = newptr + n;
+    beginptr = newptr;
+    endptr = newptr + msize;
+  }
+  void expand() {
+    reserve(std::max(capacity() * 2, (size_t)16));
+  }
+  template<typename V>
+  void push_back(V&& v) {
+    emplace_back(std::forward<V>(v));
+  }
+  template<typename... Args>
+  void emplace_back(Args&&... args) noexcept {
+    if (endptr == storageend) {
+      [[unlikely]];
+      expand();
+    }
+    new (endptr) T(std::forward<Args>(args)...);
+    ++endptr;
+    ++msize;
+  }
+};
+
 uint32_t writeFdFlag = 0x413ffc3f;
 
 thread_local SocketImpl* inReadLoop = nullptr;
@@ -178,13 +288,13 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
 
   alignas(64) std::atomic_int writeTriggerCount = 0;
   SpinMutex writeQueueMutex;
-  std::vector<iovec> queuedWrites;
-  std::vector<std::pair<size_t, Function<void(Error*)>>> queuedWriteCallbacks;
+  Container<iovec> queuedWrites;
+  Container<std::pair<size_t, Function<void(Error*)>>> queuedWriteCallbacks;
   SpinMutex writeMutex;
-  std::vector<iovec> newWrites;
-  std::vector<std::pair<size_t, Function<void(Error*)>>> newWriteCallbacks;
-  std::vector<iovec> activeWrites;
-  std::vector<std::pair<size_t, Function<void(Error*)>>> activeWriteCallbacks;
+  Container<iovec> newWrites;
+  Container<std::pair<size_t, Function<void(Error*)>>> newWriteCallbacks;
+  Container<iovec> activeWrites;
+  Container<std::pair<size_t, Function<void(Error*)>>> activeWriteCallbacks;
 
   alignas(64) std::atomic_int readTriggerCount = 0;
   bool wantsRead = false;
@@ -215,7 +325,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       resolveHandle = nullptr;
     }
     if (fd != -1) {
-      //fmt::printf("close fd %d\n", fd);
       if (::close(fd)) {
         perror("close");
       }
@@ -249,7 +358,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       if (::listen(fd, 50) == -1) {
         throw std::system_error(errno, std::generic_category());
       }
-      fmt::printf("unix socket %d listening on %s\n", fd, path);
     } else if (af == AF_INET) {
       wl.unlock();
       int port = 0;
@@ -364,10 +472,8 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       std::memcpy(&sa.sun_path[1], path.data(), len);
       if (::connect(fd, (const sockaddr*)&sa, sizeof(sa)) && errno != EAGAIN) {
         Error e(std::strerror(errno));
-        fmt::printf("unix socket %d connect to %s failed with error %s\n", fd, path, e.what());
         std::move(callback)(&e);
       } else {
-        fmt::printf("unix socket %d connect to %s succeeded\n", fd, path);
         std::move(callback)(nullptr);
         std::unique_lock ql(writeQueueMutex);
         writeLoop(wl, ql);
@@ -375,7 +481,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     } else {
       wl.unlock();
       int port = 0;
-      //fmt::printf("connect to %s ?\n", address);
       std::tie(address, port) = decodeIpAddress(address);
       auto h = resolveIpAddress(
           address, port, true,
@@ -385,9 +490,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
             if (closed.load(std::memory_order_relaxed)) {
               return;
             }
-            //if (e) fmt::printf("resolve error %s\n", e->what());
             if (!e) {
-              //fmt::printf("resolve ok\n");
               for (auto* i = aix; i; i = i->ai_next) {
                 if ((i->ai_family == AF_INET || i->ai_family == AF_INET6) && i->ai_socktype == SOCK_STREAM) {
                   if (fd == -1) {
@@ -396,8 +499,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
                       continue;
                     }
                   }
-
-                  //fmt::printf("connect fd %d\n", fd);
 
                   if (::connect(fd, i->ai_addr, i->ai_addrlen) == 0 || errno == EAGAIN || errno == EINPROGRESS) {
                     rl.unlock();
@@ -446,6 +547,10 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       std::unique_lock wl(writeMutex, std::try_to_lock);
       if (wl.owns_lock()) {
         std::unique_lock ql(writeQueueMutex);
+        size_t bytes = 0;
+        for (auto& v : queuedWrites) {
+          bytes += v.iov_len;
+        }
         writeLoop(wl, ql);
       }
     });
@@ -509,7 +614,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       return false;
     }
     if (readBuffer.empty()) {
-      readBuffer.resize(4096);
+      readBuffer.resize(65536);
     }
     if (prevReadPtr != dst) {
       prevReadPtr = dst;
@@ -536,10 +641,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     readIovecs[0].iov_len = size - prevReadOffset;
     readIovecs[1].iov_base = readBuffer.data() + readBufferOffset;
     readIovecs[1].iov_len = readBuffer.size() - readBufferFilled;
-    if (readIovecs[0].iov_len == 0 || readIovecs[0].iov_len > size || readIovecs[1].iov_len == 0 ||
-        readIovecs[1].iov_len > readBuffer.size()) {
-      throw std::runtime_error("read bad iovec");
-    }
     msghdr msg = {0};
     union {
       char buf[CMSG_SPACE(sizeof(int))];
@@ -550,16 +651,10 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     msg.msg_control = u.buf;
     msg.msg_controllen = sizeof(u.buf);
     readTriggerCount.store(-0xffff, std::memory_order_relaxed);
-    //fmt::printf("read fd %d\n", fd);
     ssize_t r = ::recvmsg(fd, &msg, MSG_CMSG_CLOEXEC);
-    if (r > 200) {
-      //fmt::printf("recvmsg %d returned %d/%d\n", fd, r, readIovecs[0].iov_len + readIovecs[1].iov_len);
-    }
     wantsRead = r == readIovecs[0].iov_len + readIovecs[1].iov_len;
     if (r == -1) {
       int error = errno;
-      //fmt::printf("recvmsg error %s\n", std::strerror(error));
-      //fmt::printf("error is %d\n", error);
       if (error == EINTR) {
         wantsRead = true;
         return false;
@@ -568,7 +663,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         return false;
       }
       Error e(std::strerror(error));
-      //fmt::printf("read error %s\n", e.what());
       if (onRead) {
         onRead(&e, nullptr);
       }
@@ -671,9 +765,13 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       bytes += vec[i].iov_len;
     }
 
+    msghdr msg = {0};
+    msg.msg_iov = (::iovec*)vec;
+    msg.msg_iovlen = std::min(veclen, (size_t)IOV_MAX);
+    msg.msg_control = nullptr;
+    msg.msg_controllen = 0;
     readTriggerCount.store(-0xffff, std::memory_order_relaxed);
-    ssize_t r = ::readv(fd, (::iovec*)vec, veclen);
-    //fmt::printf("readv %d returned %d/%d bytes\n", fd, r, bytes);
+    ssize_t r = ::recvmsg(fd, &msg, 0);
     if (restoreIovecBackup) {
       *(iovec*)vec = iovecbackup;
       vec = ovec;
@@ -682,7 +780,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     wantsRead = r == bytes;
     if (r == -1) {
       int error = errno;
-      //fmt::printf("readv error %s\n", std::strerror(error));
       if (error == EINTR) {
         wantsRead = true;
         return false;
@@ -756,30 +853,20 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         }
       }
     }
-    // size_t bytes = 0;
-    // for (size_t i = 0; i != veclen; ++i) {
-    //   bytes += vec[i].iov_len;
-    // }
-    //fmt::printf("write to fd %d\n", fd);
     writeTriggerCount.store(-0xffff, std::memory_order_relaxed);
-    TIME(sendmsg);
     ssize_t r = ::sendmsg(fd, &msg, MSG_NOSIGNAL);
-    ENDTIME(sendmsg);
-    // if (r < bytes) {
-    //   fmt::printf("write to fd %d returned %d/%d\n",fd, r, bytes);
-    // }
     bool canWrite = false;
     if (r == -1) {
       int e = errno;
       if (e == EAGAIN || e == EWOULDBLOCK) {
         r = 0;
+      } else if (e == EINTR) {
+        r = 0;
+        canWrite = true;
       }
     }
     if (r == -1) {
       int e = errno;
-      if (e == EINTR) {
-        canWrite = true;
-      }
       Error ee(std::strerror(e));
       std::move(callbacks[0].second)(&ee);
       activeWrites.clear();
@@ -788,7 +875,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       queuedWrites.clear();
       queuedWriteCallbacks.clear();
     } else {
-      size_t writtenForCallback = 0;
+      size_t writtenForCallback = r;
       while (writtenForCallback) {
         if (callbacksLen == 0) {
           throw Error("writev empty callback list");
@@ -808,6 +895,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         }
         r -= vec[offset].iov_len;
       }
+      canWrite = offset == msg.msg_iovlen;
       if (offset == veclen) {
         canWrite = true;
         activeWrites.clear();
@@ -815,21 +903,40 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       } else {
         newWrites.clear();
         newWriteCallbacks.clear();
-        for (size_t i = offset; i != veclen; ++i) {
-          if (i == offset) {
-            iovec v;
-            v.iov_base = (char*)vec[i].iov_base + r;
-            v.iov_len = vec[i].iov_len - r;
-            newWrites.push_back(v);
-          } else {
-            newWrites.push_back(vec[i]);
+        if (vec == activeWrites.data() && veclen == activeWrites.size()) {
+          activeWrites.erase(activeWrites.begin(), activeWrites.begin() + offset);
+          if (r) {
+            iovec& v = activeWrites[0];
+            v.iov_base = (char*)v.iov_base + r;
+            v.iov_len = v.iov_len - r;
+          }
+          std::swap(newWrites, activeWrites);
+        } else {
+          for (size_t i = offset; i != veclen; ++i) {
+            if (i == offset) {
+              iovec v;
+              v.iov_base = (char*)vec[i].iov_base + r;
+              v.iov_len = vec[i].iov_len - r;
+              newWrites.push_back(v);
+            } else {
+              newWrites.push_back(vec[i]);
+            }
           }
         }
-        for (size_t i = 0; i != callbacksLen; ++i) {
-          if (i == 0) {
-            newWriteCallbacks.emplace_back(callbacks[i].first - writtenForCallback, std::move(callbacks[i].second));
-          } else {
-            newWriteCallbacks.push_back(std::move(callbacks[i]));
+        if (callbacks + callbacksLen == activeWriteCallbacks.data() + activeWriteCallbacks.size()) {
+          activeWriteCallbacks.erase(
+              activeWriteCallbacks.begin(), activeWriteCallbacks.begin() + (callbacks - activeWriteCallbacks.data()));
+          if (writtenForCallback) {
+            activeWriteCallbacks[0].first -= writtenForCallback;
+          }
+          std::swap(newWriteCallbacks, activeWriteCallbacks);
+        } else {
+          for (size_t i = 0; i != callbacksLen; ++i) {
+            if (i == 0) {
+              newWriteCallbacks.emplace_back(callbacks[i].first - writtenForCallback, std::move(callbacks[i].second));
+            } else {
+              newWriteCallbacks.push_back(std::move(callbacks[i]));
+            }
           }
         }
         activeWrites.clear();
@@ -904,11 +1011,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       bytes += vec[i].iov_len;
     }
     queuedWriteCallbacks.emplace_back(bytes, std::move(callback));
-    // bytes = 0;
-    // for (auto& v : queuedWrites) {
-    //   bytes += v.iov_len;
-    // }
-    //fmt::printf("tid %d, fd %d queued, queuedWrites.size() is now %d, %d bytes\n", ::gettid(), fd, queuedWrites.size(), bytes);
   }
 
   void sendFd(int fd, Function<void(Error*)> callback) {
@@ -1028,10 +1130,7 @@ struct PollThread {
         if (events[i].events & EPOLLOUT) {
           SocketImpl* impl = (SocketImpl*)events[i].data.ptr;
           if (++impl->writeTriggerCount == 1) {
-            //fmt::printf("poll & trigger fd %d\n", impl->fd);
             impl->triggerWrite();
-          } else {
-            //fmt::printf("poll w/o trigger %d\n", impl->fd);
           }
         }
       }
