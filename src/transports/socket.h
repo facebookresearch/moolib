@@ -3,8 +3,6 @@
 
 #include "rpc.h"
 
-#include "fmt/printf.h"
-
 #include <memory>
 #include <mutex>
 #include <string_view>
@@ -77,7 +75,6 @@ struct CachedReader {
     iovecsOffset = 0;
     size_t skip = bufferFilled - bufferOffset;
     if (skip) {
-      //fmt::printf("skip is %d\n", skip);
       size_t left = skip;
       size_t offset = bufferOffset;
       char* src = buffer.data() + bufferOffset;
@@ -85,7 +82,6 @@ struct CachedReader {
       for (auto& v : iovecs) {
         size_t n = std::min(left, v.iov_len);
         std::memcpy(v.iov_base, src, n);
-        //fmt::printf("filled %d/%d bytes from buffer\n", n, v.iov_len);
         v.iov_base = (char*)v.iov_base + n;
         v.iov_len -= n;
         if (v.iov_len == 0) {
@@ -99,12 +95,11 @@ struct CachedReader {
         }
       }
       bufferOffset = src - buffer.data();
-      // fmt::printf("buffer %d/%d\n", bufferOffset, bufferFilled);
-      // fmt::printf("iovecsOffset %d/%d\n", iovecsOffset, iovecs.size());
       if (bufferOffset == bufferFilled) {
         bufferOffset = 0;
         bufferFilled = 0;
-      } else assert(iovecsOffset == iovecs.size());
+      } else
+        assert(iovecsOffset == iovecs.size());
     }
     iovecs.push_back({buffer.data() + bufferFilled, buffer.size() - bufferFilled});
   }
@@ -113,23 +108,13 @@ struct CachedReader {
     if (iovecsOffset && iovecsOffset == iovecs.size() - 1) {
       return true;
     }
-    // std::string s;
-    // for (auto& v : iovecs) {
-    //   if (!s.empty()) {
-    //     s += ", ";
-    //   }
-    //   s += fmt::sprintf("%d bytes", v.iov_len);
-    // }
-    // fmt::printf("done() called with %d iovecs (offset %d): %s\n", iovecs.size(), iovecsOffset, s);
     size_t n = socket->readv(iovecs.data() + iovecsOffset, iovecs.size() - iovecsOffset);
-    //fmt::printf("socket readv returned %d\n", n);
     bool retval = false;
     size_t i = iovecsOffset;
     size_t e = iovecs.size() - 1;
     for (; i != e; ++i) {
       auto& v = iovecs[i];
       if (n >= v.iov_len) {
-        //fmt::printf("buffer %d completely filled\n", i);
         n -= v.iov_len;
         v.iov_len = 0;
         ++iovecsOffset;
@@ -138,23 +123,19 @@ struct CachedReader {
           break;
         }
       } else {
-        //fmt::printf("buffer %d filled %d/%d\n", n, v.iov_len);
         v.iov_base = (char*)v.iov_base + n;
         v.iov_len -= n;
         return false;
       }
     }
     if (i == e) {
-      assert(iovecsOffset == iovecs.size() - 1);
       bufferFilled += n;
-      //fmt::printf("%d bytes leftover for buffer, buffer is now %d/%d\n", n, bufferOffset, bufferFilled);
-      if (bufferFilled == buffer.size()) {
-        buffer.resize(buffer.size() * 2);
-        fmt::printf("buffer full, resized to %d\n", buffer.size());
+      constexpr size_t maxBufferSize = 256 * 1024;
+      if (bufferFilled == buffer.size() && buffer.size() < maxBufferSize) {
+        buffer.resize(std::min(buffer.size() * 2, maxBufferSize));
       }
       return true;
     }
-    assert(iovecsOffset <= iovecs.size() - 1);
     return false;
   }
   void* readBufferPointer(size_t len) {

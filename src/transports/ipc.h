@@ -49,7 +49,7 @@ struct Connection : std::enable_shared_from_this<Connection> {
   BufferHandle buffer;
   std::vector<Allocator> allocators;
   CachedReader reader;
-  
+
   Connection(Socket socket) : socket(std::move(socket)), reader(this->socket) {}
   ~Connection();
 

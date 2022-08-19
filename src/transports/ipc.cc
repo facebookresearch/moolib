@@ -107,32 +107,19 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
       return;
     }
 
-    int count = 0;
-
     static constexpr int stateZero = 0;
     static constexpr int stateSocketReadSizes = 1;
     static constexpr int stateSocketReadIovecs = 2;
     static constexpr int stateAllDone = 3;
-    
-    // struct Foo {
-    //   int* c;
-    //   Foo(int* c) : c(c) {}
-    //   ~Foo() {
-    //     fmt::printf("~Foo %d\n", *c);
-    //   }
-    // } foo(&count);
 
     while (true) {
-      //fmt::printf("pid %d ipc fd %d enter state %d\n", ::getpid(), socket.nativeFd(), readState);
       switch (readState) {
       default:
         close();
-        fmt::printf("ipc fd %d exit after %d - due to close\n", socket.nativeFd(), count);
         return;
       case stateZero: {
         void* ptr = reader.readBufferPointer(12);
         if (!ptr) {
-          //fmt::printf("ipc fd %d exit after %d - stateZero\n", socket.nativeFd(), count);
           return;
         }
         uint32_t numBuffers, bufferSize;
@@ -145,18 +132,8 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
           readState = -1;
           Error e("bad signature");
           readCallback(&e, nullptr);
-          fmt::printf("exit after %d - bad sig\n", count);
-          std::abort();
           return;
         }
-        // if (numBuffers == 0 || numBuffers > 20) {
-        //   fmt::printf("exit after %d - bad numbuffers %#x\n", count, numBuffers);
-        //   std::abort();
-        // }
-        // if (bufferSize > 1000) {
-        //   fmt::printf("exit after %d - bad bufferSize %#x\n", count, bufferSize);
-        //   std::abort();
-        // }
         buffer = makeBuffer(bufferSize, numBuffers - 1);
         bufferSizes.clear();
         bufferSizes.resize(numBuffers);
@@ -167,9 +144,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
         [[fallthrough]];
       }
       case stateSocketReadSizes: {
-        //if (!socket.read(bufferSizes.data(), bufferSizes.size() * sizeof(size_t))) {
         if (!reader.done()) {
-          //fmt::printf("ipc fd %d exit after %d - stateSocketReadSizes\n", socket.nativeFd(), count);
           return;
         }
         if (bufferSizes[0] !=
@@ -177,8 +152,6 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
           readState = -1;
           Error e("bad buffer size");
           readCallback(&e, nullptr);
-          fmt::printf("ipc fd %d exit after %d - bad sizes\n", socket.nativeFd(), count);
-          std::abort();
           return;
         }
         allocators.clear();
@@ -198,7 +171,6 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
       }
       case stateSocketReadIovecs:
         if (!reader.done()) {
-          //fmt::printf("ipc fd %d exit after %d - stateSocketReadIovecs\n", socket.nativeFd(), count);
           return;
         } else {
           readState = stateAllDone;
@@ -220,47 +192,12 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
         }
         readState = stateZero;
 
-        // static std::chrono::steady_clock::time_point last;
-        // auto now = std::chrono::steady_clock::now();
-        // float t = std::chrono::duration_cast<std::chrono::duration<float, std::ratio<1, 1>>>(now - last).count();
-        // last = now;
-        // fmt::printf("scheduled! time since last - %g\n", t * 1000);
-
-        // rpc::callbackScheduledFromBackend = true;
         readCallback(nullptr, std::move(buffer));
-        // scheduler.run([connection = shared_from_this(), buf = std::move(buffer)]() mutable {
-        //   //fmt::printf("callback handled in %d\n", ::gettid());
-        //   //std::memset(&times, 0, sizeof(times));
-        //   //auto start = std::chrono::steady_clock::now();
-        //   callbackScheduledFromBackend = true;
-        //   connection->readCallback(nullptr, std::move(buf));
-        //   callbackScheduledFromBackend = false;
-        //   //auto now = std::chrono::steady_clock::now();
-        //   //float t = std::chrono::duration_cast<std::chrono::duration<float, std::ratio<1, 1>>>(now - start).count();
-        //   //fmt::printf("callback handled in %g\n", t * 1000);
-
-        //   // if (t * 1000 > 1) {
-        //   //   uint64_t maxvalue = 0;
-        //   //   for (size_t i = 0; i != times.size(); ++i) {
-        //   //     if (times[i] > maxvalue) {
-        //   //       maxvalue = times[i];
-        //   //     }
-        //   //   }
-        //   //   std::string str;
-        //   //   for (size_t i = 0; i != times.size(); ++i) {
-        //   //     if (times[i] > 0) {
-        //   //       str += fmt::sprintf("%s: %d (%g%%)\n", names[i], times[i], times[i] / (double)maxvalue * 100);
-        //   //     }
-        //   //   }
-        //   //   fmt::printf("%s", str);
-        //   // }
-        // });
         ++count;
         break;
       }
       }
     }
-    //fmt::printf("exit after %d - function exit\n", count);
   });
 }
 
