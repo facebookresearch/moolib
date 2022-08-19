@@ -130,13 +130,14 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
         fmt::printf("ipc fd %d exit after %d - due to close\n", socket.nativeFd(), count);
         return;
       case stateZero: {
-        if (!socket.read(tmpReadBuffer.data(), 12)) {
+        void* ptr = reader.readBufferPointer(12);
+        if (!ptr) {
           //fmt::printf("ipc fd %d exit after %d - stateZero\n", socket.nativeFd(), count);
           return;
         }
         uint32_t numBuffers, bufferSize;
         uint32_t recvSignature;
-        deserializeBuffer(tmpReadBuffer.data(), 12, recvSignature, numBuffers, bufferSize);
+        deserializeBuffer(ptr, 12, recvSignature, numBuffers, bufferSize);
         switch (recvSignature) {
         case sigSocketData:
           break;
@@ -160,10 +161,14 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
         bufferSizes.clear();
         bufferSizes.resize(numBuffers);
         readState = stateSocketReadSizes;
+        reader.newRead();
+        reader.addIovec(bufferSizes.data(), bufferSizes.size() * sizeof(size_t));
+        reader.startRead();
         [[fallthrough]];
       }
       case stateSocketReadSizes: {
-        if (!socket.read(bufferSizes.data(), bufferSizes.size() * sizeof(size_t))) {
+        //if (!socket.read(bufferSizes.data(), bufferSizes.size() * sizeof(size_t))) {
+        if (!reader.done()) {
           //fmt::printf("ipc fd %d exit after %d - stateSocketReadSizes\n", socket.nativeFd(), count);
           return;
         }
@@ -177,7 +182,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
           return;
         }
         allocators.clear();
-        iovecs.clear();
+        reader.newRead();
         for (size_t i = 0; i != bufferSizes.size(); ++i) {
           if (i != 0) {
             allocators.emplace_back(rpc::kCPU, bufferSizes[i]);
@@ -185,13 +190,14 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
           iovec v;
           v.iov_len = bufferSizes[i];
           v.iov_base = i == 0 ? buffer->data() : allocators.back().data();
-          iovecs.push_back(v);
+          reader.addIovec(v);
         }
+        reader.startRead();
         readState = stateSocketReadIovecs;
         [[fallthrough]];
       }
       case stateSocketReadIovecs:
-        if (!socket.readv(iovecs.data(), iovecs.size())) {
+        if (!reader.done()) {
           //fmt::printf("ipc fd %d exit after %d - stateSocketReadIovecs\n", socket.nativeFd(), count);
           return;
         } else {

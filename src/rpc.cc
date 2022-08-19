@@ -411,7 +411,7 @@ static const std::array<const char*, (int)ConnectionType::count> connectionShort
 };
 static const std::array<bool, (int)ConnectionType::count> connectionDefaultEnabled = {
     true,  // ipc
-    false,  // tcp
+    true,  // tcp
 };
 
 template<typename API>
@@ -3235,7 +3235,7 @@ std::pair<std::string_view, std::string_view> splitUri(std::string_view uri) {
 void Rpc::listen(std::string_view addr) {
   auto [scheme, path] = splitUri(addr);
   if (scheme.empty()) {
-    scheme = "ipc";
+    scheme = "tcp";
   }
   if (scheme == "tcp") {
     auto v = decodeIpAddress(addr);
@@ -3273,7 +3273,7 @@ void Rpc::connect(std::string_view addr) {
   if (!scheme.empty()) {
     switchOnScheme(scheme, [&, path = path](auto api) { impl_->connect<decltype(api)>(path, defer); });
   } else {
-    impl_->connect<API_IPC>(addr, defer);
+    impl_->connect<API_TCP>(addr, defer);
   }
   defer.execute();
 }

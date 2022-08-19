@@ -306,11 +306,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   bool wantsRead = false;
   SpinMutex readMutex;
   Function<void(Error*, std::unique_lock<SpinMutex>*)> onRead;
-  std::vector<char> readBuffer;
-  size_t readBufferOffset = 0;
-  size_t readBufferFilled = 0;
-  const void* prevReadPtr = nullptr;
-  size_t prevReadOffset = 0;
   std::vector<int> receivedFds;
 
   void close() {
@@ -532,6 +527,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         readTriggerCount.store(-0xffff, std::memory_order_relaxed);
         wantsRead = true;
         while (onRead && wantsRead) {
+          wantsRead = false;
           onRead(nullptr, &l);
           if (!l.owns_lock()) {
             l.lock();
@@ -608,170 +604,222 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     triggerRead();
   }
 
-  bool read(void* dst, size_t size) {
+  // bool read(void* dst, size_t size) {
+  //   if (closed.load(std::memory_order_relaxed) || fd == -1) {
+  //     wantsRead = false;
+  //     return false;
+  //   }
+  //   if (readBuffer.empty()) {
+  //     readBuffer.resize(65536);
+  //   }
+  //   if (prevReadPtr != dst) {
+  //     prevReadPtr = dst;
+  //     prevReadOffset = 0;
+  //     if (readBufferFilled - readBufferOffset > 0) {
+  //       size_t n = std::min(size, readBufferFilled - readBufferOffset);
+  //       std::memcpy(dst, readBuffer.data() + readBufferOffset, n);
+  //       readBufferOffset += n;
+  //       if (readBufferOffset == readBufferFilled) {
+  //         readBufferOffset = 0;
+  //         readBufferFilled = 0;
+  //       }
+  //       if (n >= size) {
+  //         wantsRead = true;
+  //         prevReadPtr = nullptr;
+  //         return true;
+  //       }
+  //       prevReadOffset = n;
+  //     }
+  //     readBufferOffset = 0;
+  //     readBufferFilled = 0;
+  //   }
+  //   std::array<iovec, 2> readIovecs;
+  //   readIovecs[0].iov_base = (char*)dst + prevReadOffset;
+  //   readIovecs[0].iov_len = size - prevReadOffset;
+  //   readIovecs[1].iov_base = readBuffer.data() + readBufferOffset;
+  //   readIovecs[1].iov_len = readBuffer.size() - readBufferFilled;
+  //   msghdr msg = {0};
+  //   union {
+  //     char buf[CMSG_SPACE(sizeof(int))];
+  //     cmsghdr align;
+  //   } u;
+  //   msg.msg_iov = (::iovec*)readIovecs.data();
+  //   msg.msg_iovlen = readIovecs.size();
+  //   msg.msg_control = u.buf;
+  //   msg.msg_controllen = sizeof(u.buf);
+  //   readTriggerCount.store(-0xffff, std::memory_order_relaxed);
+  //   ssize_t r = ::recvmsg(fd, &msg, MSG_CMSG_CLOEXEC);
+  //   wantsRead = true;
+  //   if (r == -1) {
+  //     int error = errno;
+  //     if (error == EINTR) {
+  //       wantsRead = true;
+  //       return false;
+  //     }
+  //     wantsRead = false;
+  //     if (error == EAGAIN || error == EWOULDBLOCK || error == ENOTCONN) {
+  //       return false;
+  //     }
+  //     printf("read from fd %d error %s\n", fd, std::strerror(error));
+  //     Error e(std::strerror(error));
+  //     if (onRead) {
+  //       onRead(&e, nullptr);
+  //     }
+  //     return false;
+  //   } else {
+  //     if (r == 0) {
+  //       Error e("Connection closed");
+  //       if (onRead) {
+  //         onRead(&e, nullptr);
+  //       }
+  //       return false;
+  //     }
+  //     if (msg.msg_controllen != 0) {
+  //       cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
+  //       if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+  //         int fd;
+  //         std::memcpy(&fd, CMSG_DATA(cmsg), sizeof(fd));
+  //         receivedFds.push_back(fd);
+  //       }
+  //     }
+  //     size_t dstlen = size - prevReadOffset;
+  //     prevReadOffset += std::min(dstlen, (size_t)r);
+  //     if (r > dstlen) {
+  //       readBufferFilled += r - dstlen;
+  //     }
+  //     if (prevReadOffset == size) {
+  //       prevReadPtr = nullptr;
+  //       return true;
+  //     }
+  //     return false;
+  //   }
+  // }
+
+  // bool readv(const iovec* vec, size_t veclen) {
+  //   if (closed.load(std::memory_order_relaxed) || fd == -1) {
+  //     wantsRead = false;
+  //     return false;
+  //   }
+  //   if (veclen == 0) {
+  //     wantsRead = true;
+  //     return true;
+  //   }
+  //   size_t skip = readBufferFilled - readBufferOffset;
+  //   const iovec* ovec = vec;
+  //   size_t oveclen = veclen;
+  //   iovec iovecbackup;
+  //   bool restoreIovecBackup = false;
+  //   if (prevReadPtr != vec) {
+  //     prevReadPtr = vec;
+  //     prevReadOffset = 0;
+  //   }
+  //   if (skip) {
+  //     size_t left = skip;
+  //     for (size_t i = 0;; ++i) {
+  //       if (i == veclen) {
+  //         if (readBufferOffset == readBufferFilled) {
+  //           readBufferOffset = 0;
+  //           readBufferFilled = 0;
+  //         }
+  //         prevReadPtr = nullptr;
+  //         wantsRead = true;
+  //         return true;
+  //       }
+  //       if (left == 0) {
+  //         break;
+  //       }
+  //       size_t n = std::min(left, vec[i].iov_len);
+  //       std::memcpy(vec[i].iov_base, readBuffer.data() + readBufferOffset, n);
+  //       readBufferOffset += n;
+  //       left -= n;
+  //       prevReadOffset += n;
+  //       if (n < vec[i].iov_len) {
+  //         break;
+  //       }
+  //     }
+  //     if (readBufferOffset == readBufferFilled) {
+  //       readBufferOffset = 0;
+  //       readBufferFilled = 0;
+  //     }
+  //   }
+
+  //   size_t left = prevReadOffset;
+  //   if (left) {
+  //     for (size_t i = 0;; ++i) {
+  //       if (i == veclen) {
+  //         throw std::runtime_error("readv skipped entire buffer");
+  //       }
+  //       if (left < vec[i].iov_len) {
+  //         vec = &vec[i];
+  //         veclen -= i;
+  //         iovecbackup = *vec;
+  //         restoreIovecBackup = true;
+  //         iovec* v = (iovec*)vec;
+  //         v[0].iov_base = (char*)v[0].iov_base + left;
+  //         v[0].iov_len -= left;
+  //         break;
+  //       } else {
+  //         left -= vec[i].iov_len;
+  //       }
+  //     }
+  //   }
+
+  //   ssize_t bytes = 0;
+  //   for (size_t i = 0; i != veclen; ++i) {
+  //     bytes += vec[i].iov_len;
+  //   }
+
+  //   msghdr msg = {0};
+  //   msg.msg_iov = (::iovec*)vec;
+  //   msg.msg_iovlen = std::min(veclen, (size_t)IOV_MAX);
+  //   msg.msg_control = nullptr;
+  //   msg.msg_controllen = 0;
+  //   readTriggerCount.store(-0xffff, std::memory_order_relaxed);
+  //   ssize_t r = ::recvmsg(fd, &msg, 0);
+  //   if (restoreIovecBackup) {
+  //     *(iovec*)vec = iovecbackup;
+  //     vec = ovec;
+  //     veclen = oveclen;
+  //   }
+  //   wantsRead = true;
+  //   if (r == -1) {
+  //     int error = errno;
+  //     if (error == EINTR) {
+  //       return false;
+  //     }
+  //     wantsRead = false;
+  //     if (error == EAGAIN || error == EWOULDBLOCK || error == ENOTCONN) {
+  //       return false;
+  //     }
+  //     printf("readv from fd %d error %s\n", fd, std::strerror(error));
+  //     Error e(std::strerror(error));
+  //     if (onRead) {
+  //       onRead(&e, nullptr);
+  //     }
+  //     return false;
+  //   } else {
+  //     if (r == 0) {
+  //       Error e("Connection closed");
+  //       if (onRead) {
+  //         onRead(&e, nullptr);
+  //       }
+  //       return false;
+  //     }
+  //     if (r < bytes) {
+  //       prevReadOffset += r;
+  //       return false;
+  //     } else {
+  //       prevReadPtr = nullptr;
+  //       return true;
+  //     }
+  //   }
+  // }
+
+  size_t readv(const iovec* vec, size_t veclen) {
     if (closed.load(std::memory_order_relaxed) || fd == -1) {
       wantsRead = false;
-      return false;
+      return 0;
     }
-    if (readBuffer.empty()) {
-      readBuffer.resize(65536);
-    }
-    if (prevReadPtr != dst) {
-      prevReadPtr = dst;
-      prevReadOffset = 0;
-      if (readBufferFilled - readBufferOffset > 0) {
-        size_t n = std::min(size, readBufferFilled - readBufferOffset);
-        std::memcpy(dst, readBuffer.data() + readBufferOffset, n);
-        readBufferOffset += n;
-        if (readBufferOffset == readBufferFilled) {
-          readBufferOffset = 0;
-          readBufferFilled = 0;
-        }
-        if (n >= size) {
-          wantsRead = true;
-          prevReadPtr = nullptr;
-          return true;
-        }
-        prevReadOffset = n;
-      }
-      readBufferOffset = 0;
-      readBufferFilled = 0;
-    }
-    std::array<iovec, 2> readIovecs;
-    readIovecs[0].iov_base = (char*)dst + prevReadOffset;
-    readIovecs[0].iov_len = size - prevReadOffset;
-    readIovecs[1].iov_base = readBuffer.data() + readBufferOffset;
-    readIovecs[1].iov_len = readBuffer.size() - readBufferFilled;
-    msghdr msg = {0};
-    union {
-      char buf[CMSG_SPACE(sizeof(int))];
-      cmsghdr align;
-    } u;
-    msg.msg_iov = (::iovec*)readIovecs.data();
-    msg.msg_iovlen = readIovecs.size();
-    msg.msg_control = u.buf;
-    msg.msg_controllen = sizeof(u.buf);
-    readTriggerCount.store(-0xffff, std::memory_order_relaxed);
-    ssize_t r = ::recvmsg(fd, &msg, MSG_CMSG_CLOEXEC);
-    wantsRead = r != -1 && r > readIovecs[0].iov_len;
-    if (r == -1) {
-      int error = errno;
-      if (error == EINTR) {
-        wantsRead = true;
-        return false;
-      }
-      if (error == EAGAIN || error == EWOULDBLOCK || error == ENOTCONN) {
-        return false;
-      }
-      printf("read from fd %d error %s\n", fd, std::strerror(error));
-      Error e(std::strerror(error));
-      if (onRead) {
-        onRead(&e, nullptr);
-      }
-      return false;
-    } else {
-      if (r == 0) {
-        Error e("Connection closed");
-        if (onRead) {
-          onRead(&e, nullptr);
-        }
-        return false;
-      }
-      if (msg.msg_controllen != 0) {
-        cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
-        if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
-          int fd;
-          std::memcpy(&fd, CMSG_DATA(cmsg), sizeof(fd));
-          receivedFds.push_back(fd);
-        }
-      }
-      size_t dstlen = size - prevReadOffset;
-      prevReadOffset += std::min(dstlen, (size_t)r);
-      if (r > dstlen) {
-        readBufferFilled += r - dstlen;
-      }
-      if (prevReadOffset == size) {
-        prevReadPtr = nullptr;
-        return true;
-      }
-      return false;
-    }
-  }
-
-  bool readv(const iovec* vec, size_t veclen) {
-    if (closed.load(std::memory_order_relaxed) || fd == -1) {
-      wantsRead = false;
-      return false;
-    }
-    if (veclen == 0) {
-      wantsRead = true;
-      return true;
-    }
-    size_t skip = readBufferFilled - readBufferOffset;
-    const iovec* ovec = vec;
-    size_t oveclen = veclen;
-    iovec iovecbackup;
-    bool restoreIovecBackup = false;
-    if (prevReadPtr != vec) {
-      prevReadPtr = vec;
-      prevReadOffset = 0;
-    }
-    if (skip) {
-      size_t left = skip;
-      for (size_t i = 0;; ++i) {
-        if (i == veclen) {
-          if (readBufferOffset == readBufferFilled) {
-            readBufferOffset = 0;
-            readBufferFilled = 0;
-          }
-          prevReadPtr = nullptr;
-          wantsRead = true;
-          return true;
-        }
-        if (left == 0) {
-          break;
-        }
-        size_t n = std::min(left, vec[i].iov_len);
-        std::memcpy(vec[i].iov_base, readBuffer.data() + readBufferOffset, n);
-        readBufferOffset += n;
-        left -= n;
-        prevReadOffset += n;
-        if (n < vec[i].iov_len) {
-          break;
-        }
-      }
-      if (readBufferOffset == readBufferFilled) {
-        readBufferOffset = 0;
-        readBufferFilled = 0;
-      }
-    }
-
-    size_t left = prevReadOffset;
-    if (left) {
-      for (size_t i = 0;; ++i) {
-        if (i == veclen) {
-          throw std::runtime_error("readv skipped entire buffer");
-        }
-        if (left < vec[i].iov_len) {
-          vec = &vec[i];
-          veclen -= i;
-          iovecbackup = *vec;
-          restoreIovecBackup = true;
-          iovec* v = (iovec*)vec;
-          v[0].iov_base = (char*)v[0].iov_base + left;
-          v[0].iov_len -= left;
-          break;
-        } else {
-          left -= vec[i].iov_len;
-        }
-      }
-    }
-
-    ssize_t bytes = 0;
-    for (size_t i = 0; i != veclen; ++i) {
-      bytes += vec[i].iov_len;
-    }
-
     msghdr msg = {0};
     msg.msg_iov = (::iovec*)vec;
     msg.msg_iovlen = std::min(veclen, (size_t)IOV_MAX);
@@ -779,42 +827,31 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     msg.msg_controllen = 0;
     readTriggerCount.store(-0xffff, std::memory_order_relaxed);
     ssize_t r = ::recvmsg(fd, &msg, 0);
-    if (restoreIovecBackup) {
-      *(iovec*)vec = iovecbackup;
-      vec = ovec;
-      veclen = oveclen;
-    }
-    wantsRead = r == bytes;
+    wantsRead = true;
     if (r == -1) {
       int error = errno;
       if (error == EINTR) {
-        wantsRead = true;
-        return false;
+        return 0;
       }
+      wantsRead = false;
       if (error == EAGAIN || error == EWOULDBLOCK || error == ENOTCONN) {
-        return false;
+        return 0;
       }
       printf("readv from fd %d error %s\n", fd, std::strerror(error));
       Error e(std::strerror(error));
       if (onRead) {
         onRead(&e, nullptr);
       }
-      return false;
+      return 0;
     } else {
       if (r == 0) {
         Error e("Connection closed");
         if (onRead) {
           onRead(&e, nullptr);
         }
-        return false;
+        return 0;
       }
-      if (r < bytes) {
-        prevReadOffset += r;
-        return false;
-      } else {
-        prevReadPtr = nullptr;
-        return true;
-      }
+      return r;
     }
   }
 
@@ -1034,9 +1071,9 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     writev(iovecs.data(), 2, std::move(callback));
   }
 
-  int recvFd() {
+  int recvFd(CachedReader& reader) {
     uint32_t flag = 0;
-    if (!read(&flag, sizeof(flag))) {
+    if (!reader.readCopy(&flag, sizeof(flag))) {
       return -1;
     }
     if (flag != writeFdFlag) {
@@ -1265,11 +1302,7 @@ void Socket::setOnRead(Function<void(Error*, std::unique_lock<SpinMutex>*)> call
   impl->setOnRead(std::move(callback));
 }
 
-bool Socket::read(void* dst, size_t size) {
-  return impl->read(dst, size);
-}
-
-bool Socket::readv(const iovec* vec, size_t veclen) {
+size_t Socket::readv(const iovec* vec, size_t veclen) {
   return impl->readv(vec, veclen);
 }
 
@@ -1277,8 +1310,8 @@ void Socket::sendFd(int fd, Function<void(Error*)> callback) {
   impl->sendFd(fd, std::move(callback));
 }
 
-int Socket::recvFd() {
-  return impl->recvFd();
+int Socket::recvFd(CachedReader& reader) {
+  return impl->recvFd(reader);
 }
 
 std::string Socket::localAddress() const {
