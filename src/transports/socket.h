@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
 
 #pragma once
 
@@ -88,7 +94,6 @@ struct CachedReader {
           ++iovecsOffset;
         }
         src += n;
-        assert(src <= end);
         left -= n;
         if (left == 0) {
           break;
@@ -98,13 +103,11 @@ struct CachedReader {
       if (bufferOffset == bufferFilled) {
         bufferOffset = 0;
         bufferFilled = 0;
-      } else
-        assert(iovecsOffset == iovecs.size());
+      }
     }
     iovecs.push_back({buffer.data() + bufferFilled, buffer.size() - bufferFilled});
   }
   bool done() {
-    assert(iovecsOffset < iovecs.size());
     if (iovecsOffset && iovecsOffset == iovecs.size() - 1) {
       return true;
     }

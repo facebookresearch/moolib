@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
 
 #pragma once
 
@@ -44,7 +50,6 @@ struct Connection : std::enable_shared_from_this<Connection> {
   Socket socket;
   int readState = 0;
   Function<void(Error*, BufferHandle)> readCallback;
-  std::array<char, 32> tmpReadBuffer;
   std::vector<size_t> bufferSizes;
   BufferHandle buffer;
   std::vector<Allocator> allocators;
@@ -60,10 +65,6 @@ struct Connection : std::enable_shared_from_this<Connection> {
 
   std::string localAddress() const;
   std::string remoteAddress() const;
-
-  int getFd() const {
-    return socket.nativeFd();
-  }
 };
 
 } // namespace ipc

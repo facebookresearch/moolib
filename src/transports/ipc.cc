@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
 
 #include "ipc.h"
 
@@ -6,9 +12,6 @@
 #include <unistd.h>
 
 namespace rpc {
-
-extern thread_local std::array<const char*, 4000> names;
-extern thread_local std::array<uint64_t, 4000> times;
 
 extern thread_local bool callbackScheduledFromBackend;
 
@@ -193,7 +196,6 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
         readState = stateZero;
 
         readCallback(nullptr, std::move(buffer));
-        ++count;
         break;
       }
       }
