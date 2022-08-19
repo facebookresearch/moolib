@@ -45,6 +45,8 @@ struct Socket {
 
   std::string localAddress() const;
   std::string remoteAddress() const;
+
+  int nativeFd() const;
 };
 
 } // namespace rpc

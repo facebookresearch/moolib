@@ -628,6 +628,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
           readBufferFilled = 0;
         }
         if (n >= size) {
+          wantsRead = true;
           prevReadPtr = nullptr;
           return true;
         }
@@ -652,7 +653,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     msg.msg_controllen = sizeof(u.buf);
     readTriggerCount.store(-0xffff, std::memory_order_relaxed);
     ssize_t r = ::recvmsg(fd, &msg, MSG_CMSG_CLOEXEC);
-    wantsRead = r == readIovecs[0].iov_len + readIovecs[1].iov_len;
+    wantsRead = r != -1 && r > readIovecs[0].iov_len;
     if (r == -1) {
       int error = errno;
       if (error == EINTR) {
@@ -662,6 +663,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       if (error == EAGAIN || error == EWOULDBLOCK || error == ENOTCONN) {
         return false;
       }
+      printf("read from fd %d error %s\n", fd, std::strerror(error));
       Error e(std::strerror(error));
       if (onRead) {
         onRead(&e, nullptr);
@@ -701,6 +703,10 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       wantsRead = false;
       return false;
     }
+    if (veclen == 0) {
+      wantsRead = true;
+      return true;
+    }
     size_t skip = readBufferFilled - readBufferOffset;
     const iovec* ovec = vec;
     size_t oveclen = veclen;
@@ -719,6 +725,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
             readBufferFilled = 0;
           }
           prevReadPtr = nullptr;
+          wantsRead = true;
           return true;
         }
         if (left == 0) {
@@ -787,7 +794,8 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       if (error == EAGAIN || error == EWOULDBLOCK || error == ENOTCONN) {
         return false;
       }
-      Error e(std::strerror(errno));
+      printf("readv from fd %d error %s\n", fd, std::strerror(error));
+      Error e(std::strerror(error));
       if (onRead) {
         onRead(&e, nullptr);
       }
@@ -866,6 +874,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     }
     if (r == -1) {
       int e = errno;
+      fmt::printf("write to fd %d error %s\n", fd, std::strerror(e));
       Error ee(std::strerror(e));
       std::move(callbacks[0].second)(&ee);
       activeWrites.clear();
@@ -889,6 +898,11 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       }
       size_t offset = 0;
       for (; offset != veclen; ++offset) {
+        // uint32_t rid;
+        // uint32_t fid;
+        // std::memcpy(&rid, vec[offset].iov_base, 4);
+        // std::memcpy(&fid, (char*)vec[offset].iov_base + 4, 4);
+        // fmt::printf("actually wrote %d/%d bytes to fd %d, possible rid %#x fid %#x\n", r, vec[offset].iov_len, fd, rid, fid);
         if (r < vec[offset].iov_len) {
           break;
         }
@@ -1273,6 +1287,10 @@ std::string Socket::localAddress() const {
 
 std::string Socket::remoteAddress() const {
   return impl->remoteAddress();
+}
+
+int Socket::nativeFd() const {
+  return impl->fd;
 }
 
 } // namespace rpc

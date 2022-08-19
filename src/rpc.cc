@@ -20,6 +20,7 @@
 #include <random>
 #include <thread>
 #include <time.h>
+#include <unistd.h>
 
 namespace rpc {
 
@@ -187,11 +188,11 @@ inline struct Timekeeper {
   }
 } timekeeper;
 
-struct Clock {
+struct FastClock {
   using duration = std::chrono::nanoseconds;
   using rep = duration::rep;
   using period = duration::period;
-  using time_point = std::chrono::time_point<Clock, duration>;
+  using time_point = std::chrono::time_point<FastClock, duration>;
   static constexpr bool is_steady = true;
 
   static time_point now() noexcept {
@@ -205,6 +206,8 @@ struct Clock {
     return r;
   }
 };
+
+using Clock = std::chrono::steady_clock;
 
 template<typename Buffer>
 TensorContext getTensorContext(Buffer& buffer) {
@@ -408,7 +411,7 @@ static const std::array<const char*, (int)ConnectionType::count> connectionShort
 };
 static const std::array<bool, (int)ConnectionType::count> connectionDefaultEnabled = {
     true,  // ipc
-    true,  // tcp
+    false,  // tcp
 };
 
 template<typename API>
@@ -714,75 +717,79 @@ struct PeerImpl {
       Clock::time_point now, size_t* indexUsed = nullptr,
       Me<RpcConnectionImplBase>* outConnection = nullptr, bool shouldFindPeer = true) noexcept {
     // log("banditSend %d bytes mask %#x\n", (int)buffer->size, mask);
-    thread_local std::vector<std::pair<size_t, float>> list;
-    list.clear();
-    float sum = 0.0f;
-    bool hasCudaTensor = false;
-    auto* tensors = buffer->tensors();
-    for (size_t i = 0; i != buffer->nTensors; ++i) {
-      if (tensors[i].tensor.is_cuda()) {
-        hasCudaTensor = true;
-        break;
+    try {
+      thread_local std::vector<std::pair<size_t, float>> list;
+      list.clear();
+      float sum = 0.0f;
+      bool hasCudaTensor = false;
+      auto* tensors = buffer->tensors();
+      for (size_t i = 0; i != buffer->nTensors; ++i) {
+        if (tensors[i].tensor.is_cuda()) {
+          hasCudaTensor = true;
+          break;
+        }
       }
-    }
-    for (size_t i = 0; i != connections_.size(); ++i) {
-      if (~mask & (1 << i)) {
-        continue;
-      }
-      if (hasCudaTensor) {
-        fatal("CUDA tensors are currently not supported, sorry!");
-        bool supportsCuda = false;
-        switchOnAPI((ConnectionType)i, [&](auto api) { supportsCuda = decltype(api)::supportsCuda; });
-        if (!supportsCuda) {
+      for (size_t i = 0; i != connections_.size(); ++i) {
+        if (~mask & (1 << i)) {
           continue;
         }
-      }
-      auto& v = connections_[i];
-      if (willConnectOrSend(now, v)) {
-        float score = std::exp(v.readBanditValue * 4);
-        // log("bandit %s has score %g\n", connectionTypeName[i], score);
-        sum += score;
-        list.emplace_back(i, sum);
-      }
-    }
-    if (list.size() > 0) {
-      size_t index;
-      if (list.size() == 1) {
-        index = list[0].first;
-      } else {
-        float v = std::uniform_real_distribution<float>(0.0f, sum)(rng);
-        index = std::lower_bound(list.begin(), std::prev(list.end()), v, [&](auto& a, float b) {
-                  return a.second < b;
-                })->first;
-      }
-      // log("bandit chose %d (%s)\n", index, connectionTypeName.at(index));
-      auto& x = connections_.at(index);
-      x.sendCount.fetch_add(1, std::memory_order_relaxed);
-      bool b = switchOnAPI((ConnectionType)index, [&](auto api) {
-        return send<decltype(api)>(now, buffer, tensorContext, outConnection, defer);
-      });
-      if (!b && buffer) {
-        mask &= ~(1 << index);
-        return banditSend(mask, std::move(buffer), tensorContext, defer, now, indexUsed, outConnection, shouldFindPeer);
-      }
-      if (b && indexUsed) {
-        *indexUsed = index;
-      }
-      return b;
-    } else {
-      log("No connectivity to %s\n", name);
-
-      if (shouldFindPeer) {
-        int timeout = findThisPeerIncrementingTimeoutMilliseconds;
-        if (now - lastFindThisPeer.load(std::memory_order_relaxed) >= std::chrono::milliseconds(timeout)) {
-          log("findpeer timeout is %d\n", timeout);
-          findThisPeerIncrementingTimeoutMilliseconds.store(
-              std::min(std::max(timeout, 250) * 2, 1000), std::memory_order_relaxed);
-          lastFindThisPeer.store(now, std::memory_order_relaxed);
-          findPeer();
+        if (hasCudaTensor) {
+          fatal("CUDA tensors are currently not supported, sorry!");
+          bool supportsCuda = false;
+          switchOnAPI((ConnectionType)i, [&](auto api) { supportsCuda = decltype(api)::supportsCuda; });
+          if (!supportsCuda) {
+            continue;
+          }
+        }
+        auto& v = connections_[i];
+        if (willConnectOrSend(now, v)) {
+          float score = std::exp(v.readBanditValue * 4);
+          // log("bandit %s has score %g\n", connectionTypeName[i], score);
+          sum += score;
+          list.emplace_back(i, sum);
         }
       }
-      return false;
+      if (list.size() > 0) {
+        size_t index;
+        if (list.size() == 1) {
+          index = list[0].first;
+        } else {
+          float v = std::uniform_real_distribution<float>(0.0f, sum)(rng);
+          index = std::lower_bound(list.begin(), std::prev(list.end()), v, [&](auto& a, float b) {
+                    return a.second < b;
+                  })->first;
+        }
+        // log("bandit chose %d (%s)\n", index, connectionTypeName.at(index));
+        auto& x = connections_.at(index);
+        x.sendCount.fetch_add(1, std::memory_order_relaxed);
+        bool b = switchOnAPI((ConnectionType)index, [&](auto api) {
+          return send<decltype(api)>(now, buffer, tensorContext, outConnection, defer);
+        });
+        if (!b && buffer) {
+          mask &= ~(1 << index);
+          return banditSend(mask, std::move(buffer), tensorContext, defer, now, indexUsed, outConnection, shouldFindPeer);
+        }
+        if (b && indexUsed) {
+          *indexUsed = index;
+        }
+        return b;
+      } else {
+        log("No connectivity to %s\n", name);
+
+        if (shouldFindPeer) {
+          int timeout = findThisPeerIncrementingTimeoutMilliseconds;
+          if (now - lastFindThisPeer.load(std::memory_order_relaxed) >= std::chrono::milliseconds(timeout)) {
+            log("findpeer timeout is %d\n", timeout);
+            findThisPeerIncrementingTimeoutMilliseconds.store(
+                std::min(std::max(timeout, 250) * 2, 1000), std::memory_order_relaxed);
+            lastFindThisPeer.store(now, std::memory_order_relaxed);
+            findPeer();
+          }
+        }
+        return false;
+      }
+    } catch (const std::exception& e) {
+      fatal("banditSend caught an exception %s\n", e.what());
     }
   }
 
@@ -805,64 +812,64 @@ struct PeerImpl {
     TIME(sendSetup);
     auto& x = connections_[index<API>];
     std::shared_lock rl(x.mutex);
-    if (x.conns.empty()) {
-      if (x.connectionAttempts.load(std::memory_order_relaxed) == 0 ||
-          now - x.lastTryConnect.load(std::memory_order_relaxed) >= std::chrono::seconds(1)) {
-        x.lastTryConnect = now;
-        ++x.connectionAttempts;
-        if (x.remoteAddresses.empty()) {
-          x.valid = false;
-        } else {
-          std::string_view addr;
-          if (x.remoteAddresses.size() == 1) {
-            addr = x.remoteAddresses[0];
+    while (true) {
+      if (x.conns.empty()) {
+        if (x.connectionAttempts.load(std::memory_order_relaxed) == 0 ||
+            now - x.lastTryConnect.load(std::memory_order_relaxed) >= std::chrono::seconds(1)) {
+          x.lastTryConnect = now;
+          ++x.connectionAttempts;
+          if (x.remoteAddresses.empty()) {
+            x.valid = false;
           } else {
-            addr = x.remoteAddresses[random<size_t>(0, x.remoteAddresses.size() - 1)];
-          }
-          rl.unlock();
-          if (!addr.empty()) {
-            // static std::atomic_int connects = 0;
-            // log(1, "connecting to %s::%s!! :D total %d\n", connectionTypeName[index<API>], addr, ++connects);
-            connect<API, false>(addr, defer);
+            std::string_view addr;
+            if (x.remoteAddresses.size() == 1) {
+              addr = x.remoteAddresses[0];
+            } else {
+              addr = x.remoteAddresses[random<size_t>(0, x.remoteAddresses.size() - 1)];
+            }
+            rl.unlock();
+            if (!addr.empty()) {
+              // static std::atomic_int connects = 0;
+              // log(1, "connecting to %s::%s!! :D total %d\n", connectionTypeName[index<API>], addr, ++connects);
+              connect<API, false>(addr, defer);
+            }
           }
         }
-      }
-      if (outConnection) {
-        *outConnection = nullptr;
-      }
-      return false;
-    } else {
-      size_t i = random<size_t>(0, x.conns.size() - 1);
-      auto& c = x.conns[i];
-      if (c->dead.load(std::memory_order_relaxed)) {
-        log(0, "Connection through %s to %s is dead, yo!\n", connectionTypeName[index<API>], name);
-        rl.unlock();
-        std::unique_lock wl(x.mutex);
-        if (x.conns.size() > i && x.conns[i]->dead) {
-          auto& c = x.conns[i];
-          BufferHandle buffer;
-          serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqClose);
-          ((RpcConnectionImpl<API>&)*c).send(std::move(buffer), tensorContext, defer);
-          throwAway(x, i);
-          if (outConnection) {
-            *outConnection = nullptr;
-          }
+        if (outConnection) {
+          *outConnection = nullptr;
         }
         return false;
       } else {
-        ENDTIME(sendSetup);
-        ((RpcConnectionImpl<API>&)*c).send(std::move(buffer), tensorContext, defer);
-        if (outConnection) {
-          *outConnection = makeMe(&*c);
+        size_t i = random<size_t>(0, x.conns.size() - 1);
+        auto& c = x.conns[i];
+        if (c->dead.load(std::memory_order_relaxed)) {
+          log(0, "Connection through %s to %s is dead, yo!\n", connectionTypeName[index<API>], name);
+          rl.unlock();
+          std::unique_lock wl(x.mutex);
+          if (x.conns.size() > i && x.conns[i]->dead) {
+            auto& c = x.conns[i];
+            BufferHandle buffer;
+            serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqClose);
+            ((RpcConnectionImpl<API>&)*c).send(std::move(buffer), tensorContext, defer);
+            throwAway(x, i);
+          }
+          wl.unlock();
+          rl.lock();
+        } else {
+          ENDTIME(sendSetup);
+          ((RpcConnectionImpl<API>&)*c).send(std::move(buffer), tensorContext, defer);
+          if (outConnection) {
+            *outConnection = makeMe(&*c);
+          }
+          return true;
         }
-        return true;
       }
     }
   }
 
   void throwAway(Connection& x, size_t i) {
     auto cv = std::move(x.conns[i]);
-    log(0, "Throwing away connection %s to %s\n", connectionTypeName.at(cv->apiIndex()), name);
+    log("Throwing away connection %s to %s\n", connectionTypeName.at(cv->apiIndex()), name);
     std::swap(x.conns.back(), x.conns[i]);
     x.conns.pop_back();
     if (x.conns.empty()) {
@@ -928,16 +935,16 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
     if (dead.exchange(true)) {
       return;
     }
-    rpc.log("Connection %s closed\n", connectionTypeName[index<API>]);
+    rpc.log(0, "Connection %s (fd %d) closed\n", connectionTypeName[index<API>], API::cast(connection).getFd());
     API::cast(connection).close();
   }
 
   void onError([[maybe_unused]] Error* err) {
-    rpc.log("Connection %s to %s error: %s\n", connectionTypeName[index<API>], connectAddr, err->what());
+    rpc.log(0, "Connection %s to %s error: %s\n", connectionTypeName[index<API>], connectAddr, err->what());
     close();
   }
   void onError([[maybe_unused]] const char* err) {
-    rpc.log("Connection %s error: %s\n", connectionTypeName[index<API>], err);
+    rpc.log(0, "Connection %s error: %s\n", connectionTypeName[index<API>], err);
     close();
   }
 
@@ -983,7 +990,7 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
     std::memcpy(&fid, ptr, sizeof(uint32_t));
     ptr += sizeof(uint32_t);
     len -= sizeof(uint32_t);
-    rpc.log("onData rid %#x fid %#x\n", rid, fid);
+    rpc.log("onData rid %#x fid %#x from fd %d\n", rid, fid, API::cast(connection).getFd());
     if (peer && fid != reqGreeting) {
       auto& x = peer->connections_.at(index<API>);
       if (now - x.lastRecv.load(std::memory_order_relaxed) >= std::chrono::milliseconds(1)) {
@@ -1004,11 +1011,11 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
           PeerId peerId;
           std::vector<ConnectionTypeInfo> info;
           deserializeBuffer(view, peerName, peerId, info);
-          fmt::printf("got greeting!\n");
+          //fmt::printf("got greeting!\n");
           rpc.onGreeting(*this, peerName, peerId, std::move(info));
         } else if (signature == kSignatureResponse) {
           std::lock_guard l(earlySendQueueMutex);
-          fmt::printf("got greeting response, queue size %d\n", earlySendQueue.size());
+          //fmt::printf("got greeting response, queue size %d\n", earlySendQueue.size());
           hasReceivedGreetingResponse = true;
           Deferrer defer;
           TensorContext nullTensorContext;
@@ -1036,7 +1043,7 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
 
   void greetingResponse(Deferrer& defer) {
     // log("%p::greet(\"%s\", %s)\n", (void*)this, name, peerId.toString().c_str());
-    fmt::printf("sending greeting response!\n");
+    //fmt::printf("sending greeting response!\n");
     BufferHandle buffer;
     serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqGreeting, kSignatureResponse);
     TensorContext nullTensorContext;
@@ -1058,6 +1065,11 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
         return;
       }
     }
+    // uint32_t rid;
+    // std::memcpy(&rid, buffer->data(), sizeof(uint32_t));
+    // uint32_t fid;
+    // std::memcpy(&fid, buffer->data() + 4, sizeof(uint32_t));
+    // rpc.log(0, "write rid %#x fid %#x to fd %d\n", rid, fid, API::cast(connection).getFd());
     API::cast(connection).write(std::move(buffer), nullptr);
   }
 
@@ -1529,12 +1541,14 @@ struct Rpc::Impl {
       }
       if (!s.hasAddedFailureLatency && now - s.lastSendTimestamp >= timeout) {
         s.hasAddedFailureLatency = true;
-        log("  -- rid %#x to %s   %s failed \n", o.rid, o.peer->name, connectionTypeName.at(s.connectionIndex));
+        log(0, "  -- rid %#x to %s   %s failed  (ack is %d)\n", o.rid, o.peer->name, connectionTypeName.at(s.connectionIndex), s.acked);
         switchOnAPI(
             (ConnectionType)s.connectionIndex, [&](auto api) { addLatency<decltype(api)>(*o.peer, now, timeout, 1); });
       }
       if (now - s.connection->lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::seconds(8) && false) {
-        log(0, "Closing connection %s to %s due to timeout!\n", connectionTypeName.at(s.connectionIndex), o.peer->name);
+        log(0, "Closing connection %s to %s due to timeout! (rid %#x)\n", connectionTypeName.at(s.connectionIndex), o.peer->name, o.rid);
+        //log(0, "Aborting!!\n");
+        //std::abort();
         auto& x = o.peer->connections_.at(s.connectionIndex);
         std::lock_guard l(x.mutex);
         for (size_t i = 0; i != x.conns.size(); ++i) {
@@ -1657,7 +1671,7 @@ struct Rpc::Impl {
     for (auto i = floatingConnections_.begin(); i != floatingConnections_.end();) {
       auto& c = *i;
       if (now - c->creationTimestamp >= std::chrono::seconds(10)) {
-        log("Collecting floating connection\n");
+        log(0, "Collecting floating connection\n");
         for (auto& v2 : c->conns) {
           toCollect.push_back(std::move(v2));
         }
@@ -1732,8 +1746,14 @@ struct Rpc::Impl {
         auto& x = p.connections_[ci];
         std::lock_guard l(x.mutex);
         for (size_t i = 0; i != x.conns.size(); ++i) {
-          if (now - x.conns[i]->lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::seconds(30)) {
-            log(0, "closing connection due to long timeout\n");
+          if (x.conns[i]->dead.load(std::memory_order_relaxed)) {
+            log(0, "Connection is dead, throwing away!\n");
+            p.throwAway(x, i);
+            --i;
+            continue;
+          }
+          if (now - x.conns[i]->lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::seconds(30) && false) {
+            log("closing conn due to long timeout\n");
             BufferHandle buffer;
             serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqClose);
             TensorContext nullTensorContext;
@@ -1813,11 +1833,11 @@ struct Rpc::Impl {
               auto&& [k, v] = *i;
               if (now - v.creationTimestamp >= absTimeoutDuration) {
                 if constexpr (isIncoming) {
-                  log("Response %#x timed out for real\n", v.rid);
+                  log(0, "Response %#x timed out for real\n", v.rid);
 
                   v.peer->addRecentIncoming(v.rid, now + std::chrono::minutes(1));
                 } else {
-                  log("Request %#x timed out for real\n", v.rid);
+                  log(0, "Request %#x timed out for real\n", v.rid);
                   Error err(fmt::sprintf("Call (%s::%s) timed out", v.peer->name, v.peer->functionName(v.fid)));
                   TensorContext nullTensorContext;
                   std::move(v.response)(nullptr, nullTensorContext, &err);
@@ -2166,7 +2186,7 @@ struct Rpc::Impl {
       TIME(updateTimeout);
       updateTimeout(now + std::chrono::seconds(1));
       ENDTIME(updateTimeout);
-      //log(0, "sent! request %#x %s::%#x  in %g\n", rid, peer.name, fid, seconds(Clock::now() - now) * 1000);
+      log("sent! request %#x %s::%#x  in %g\n", rid, peer.name, fid, seconds(Clock::now() - now) * 1000);
 
       // thread_local int counter = 0;
       // if (++counter % 10000 == 0) {
@@ -2689,7 +2709,7 @@ struct RpcImpl : RpcImplBase {
         }
         if (x.recv.done) {
           l.unlock();
-          log("recv for rid %#x already done\n", rid);
+          log(0, "recv for rid %#x already done\n", rid);
           BufferHandle buffer;
           serializeToBuffer(buffer, rid, reqAck);
           TensorContext nullTensorContext;
@@ -2954,10 +2974,16 @@ struct RpcImpl : RpcImplBase {
             if (tensorContext.stream) {
               streamGuard.emplace(*tensorContext.stream);
             }
-            auto retfunc = [weak = std::move(weak), peer, rid](BufferHandle outbuffer) mutable {
+            auto start = Clock::now();
+            std::string fname(def->name);
+            auto retfunc = [weak = std::move(weak), peer, rid, start, fname](BufferHandle outbuffer) mutable {
               auto me = weak->template lock<RpcImpl>();
               if (!me) {
                 return;
+              }
+              float t = seconds(Clock::now() - start);
+              if (t > 1) {
+                me->log(0, "RPC %s took %g\n", fname, t);
               }
               Deferrer defer;
               auto& rpc = me->rpc;
@@ -3016,7 +3042,7 @@ struct RpcImpl : RpcImplBase {
     rid |= 1;
     switch (fid) {
     case reqClose: {
-      log(0, "got reqClose from %s\n", peer.name);
+      log("got reqClose from %s\n", peer.name);
       auto& x = peer.connections_.at(index<API>);
       std::lock_guard l(x.mutex);
       for (size_t i = 0; i != x.conns.size(); ++i) {
@@ -3105,7 +3131,7 @@ struct RpcImpl : RpcImplBase {
             rpc.cleanup(i->second, defer);
             oBucket.map.erase(i);
           } else {
-            // log("got response for unknown rid %#x from %s\n", rid, peer.name);
+            log(0, "got response for unknown rid %#x from %s\n", rid, peer.name);
           }
         }
         if (response) {
@@ -3209,7 +3235,7 @@ std::pair<std::string_view, std::string_view> splitUri(std::string_view uri) {
 void Rpc::listen(std::string_view addr) {
   auto [scheme, path] = splitUri(addr);
   if (scheme.empty()) {
-    scheme = "tcp";
+    scheme = "ipc";
   }
   if (scheme == "tcp") {
     auto v = decodeIpAddress(addr);
@@ -3247,7 +3273,7 @@ void Rpc::connect(std::string_view addr) {
   if (!scheme.empty()) {
     switchOnScheme(scheme, [&, path = path](auto api) { impl_->connect<decltype(api)>(path, defer); });
   } else {
-    impl_->connect<API_TCP>(addr, defer);
+    impl_->connect<API_IPC>(addr, defer);
   }
   defer.execute();
 }

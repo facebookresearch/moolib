@@ -111,19 +111,19 @@ inline size_t nAllocs = 0;
 
 template<typename Header, typename Data>
 Header* allocate(size_t n) {
-  std::lock_guard l(allocmutex);
-  allocsizes[n] += 1;
-  if (++nAllocs % 1000000 == 0) {
-    printf("%d allocations (sizeof Header %d)\n", nAllocs, sizeof(Header));
-    std::vector<std::pair<size_t, size_t>> sorted;
-    for (auto& [k, v] : allocsizes) {
-      sorted.emplace_back(v, k);
-    }
-    std::sort(sorted.begin(), sorted.end());
-    for (auto& [v, k] : sorted) {
-      printf(" %d  x%d\n", k, v);
-    }
-  }
+  // std::lock_guard l(allocmutex);
+  // allocsizes[n] += 1;
+  // if (++nAllocs % 100000 == 0) {
+  //   printf("%d allocations (sizeof Header %d)\n", nAllocs, sizeof(Header));
+  //   std::vector<std::pair<size_t, size_t>> sorted;
+  //   for (auto& [k, v] : allocsizes) {
+  //     sorted.emplace_back(v, k);
+  //   }
+  //   std::sort(sorted.begin(), sorted.end());
+  //   for (auto& [v, k] : sorted) {
+  //     printf(" %d  x%d\n", k, v);
+  //   }
+  // }
   constexpr size_t overhead = sizeof(Header);
   if (n + overhead <= 64) {
     return allocimpl::Storage<Header, Data, 64>::get().allocate();
@@ -156,7 +156,7 @@ void deallocate(Header* ptr) {
   } else if (n <= 4096 + 1024) {
     allocimpl::Storage<Header, Data, 4096>::get().deallocate(ptr);
   } else {
-    printf("n is %d\n", n); 
+    //printf("n is %d\n", n); 
     if (n <= 4096 || ptr->refcount != 0) {
       printf("large dealloc refcount %d\n", (int)ptr->refcount);
       std::abort();

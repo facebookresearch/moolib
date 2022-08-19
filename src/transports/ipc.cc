@@ -123,14 +123,15 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
     // } foo(&count);
 
     while (true) {
+      //fmt::printf("pid %d ipc fd %d enter state %d\n", ::getpid(), socket.nativeFd(), readState);
       switch (readState) {
       default:
         close();
-        fmt::printf("exit after %d - due to close\n", count);
+        fmt::printf("ipc fd %d exit after %d - due to close\n", socket.nativeFd(), count);
         return;
       case stateZero: {
         if (!socket.read(tmpReadBuffer.data(), 12)) {
-          fmt::printf("exit after %d - stateZero\n", count);
+          //fmt::printf("ipc fd %d exit after %d - stateZero\n", socket.nativeFd(), count);
           return;
         }
         uint32_t numBuffers, bufferSize;
@@ -143,7 +144,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
           readState = -1;
           Error e("bad signature");
           readCallback(&e, nullptr);
-          fmt::printf("exit after %d - bad sig\n", count);\
+          fmt::printf("exit after %d - bad sig\n", count);
           std::abort();
           return;
         }
@@ -163,7 +164,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
       }
       case stateSocketReadSizes: {
         if (!socket.read(bufferSizes.data(), bufferSizes.size() * sizeof(size_t))) {
-          fmt::printf("exit after %d - stateSocketReadSizes\n", count);
+          //fmt::printf("ipc fd %d exit after %d - stateSocketReadSizes\n", socket.nativeFd(), count);
           return;
         }
         if (bufferSizes[0] !=
@@ -171,7 +172,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
           readState = -1;
           Error e("bad buffer size");
           readCallback(&e, nullptr);
-          fmt::printf("exit after %d - bad sizes\n", count);
+          fmt::printf("ipc fd %d exit after %d - bad sizes\n", socket.nativeFd(), count);
           std::abort();
           return;
         }
@@ -191,7 +192,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
       }
       case stateSocketReadIovecs:
         if (!socket.readv(iovecs.data(), iovecs.size())) {
-          fmt::printf("exit after %d - stateSocketReadIovecs\n", count);
+          //fmt::printf("ipc fd %d exit after %d - stateSocketReadIovecs\n", socket.nativeFd(), count);
           return;
         } else {
           readState = stateAllDone;

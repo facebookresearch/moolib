@@ -59,6 +59,10 @@ struct Connection : std::enable_shared_from_this<Connection> {
 
   std::string localAddress() const;
   std::string remoteAddress() const;
+
+  int getFd() const {
+    return socket.nativeFd();
+  }
 };
 
 } // namespace ipc
