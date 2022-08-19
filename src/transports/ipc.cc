@@ -99,12 +99,14 @@ template void Connection::write(SharedBufferHandle, Function<void(Error*)>);
 
 void Connection::close() {
   socket.close();
+  readCallback = nullptr;
 }
 
 void Connection::read(Function<void(Error*, BufferHandle)> callback) {
-  socket.setOnRead([this, callback = std::move(callback)](Error* error, auto* lock) mutable {
+  readCallback = std::move(callback);
+  socket.setOnRead([this](Error* error, auto* lock) mutable {
     if (error) {
-      callback(error, nullptr);
+      readCallback(error, nullptr);
       return;
     }
 
@@ -119,40 +121,44 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
         close();
         return;
       case stateZero: {
-        if (!socket.read(tmpReadBuffer.data(), 12)) {
+        void* ptr = reader.readBufferPointer(12);
+        if (!ptr) {
           return;
         }
         uint32_t numBuffers, bufferSize;
         uint32_t recvSignature;
-        deserializeBuffer(tmpReadBuffer.data(), 12, recvSignature, numBuffers, bufferSize);
+        deserializeBuffer(ptr, 12, recvSignature, numBuffers, bufferSize);
         switch (recvSignature) {
         case sigSocketData:
           break;
         default:
           readState = -1;
           Error e("bad signature");
-          callback(&e, nullptr);
+          readCallback(&e, nullptr);
           return;
         }
         buffer = makeBuffer(bufferSize, numBuffers - 1);
         bufferSizes.clear();
         bufferSizes.resize(numBuffers);
         readState = stateSocketReadSizes;
+        reader.newRead();
+        reader.addIovec(bufferSizes.data(), bufferSizes.size() * sizeof(size_t));
+        reader.startRead();
         [[fallthrough]];
       }
       case stateSocketReadSizes: {
-        if (!socket.read(bufferSizes.data(), bufferSizes.size() * sizeof(size_t))) {
+        if (!reader.done()) {
           return;
         }
         if (bufferSizes[0] !=
             size_t((std::byte*)(buffer->tensorMetaDataOffsets() + buffer->nTensors) - buffer->data())) {
           readState = -1;
           Error e("bad buffer size");
-          callback(&e, nullptr);
+          readCallback(&e, nullptr);
           return;
         }
         allocators.clear();
-        iovecs.clear();
+        reader.newRead();
         for (size_t i = 0; i != bufferSizes.size(); ++i) {
           if (i != 0) {
             allocators.emplace_back(rpc::kCPU, bufferSizes[i]);
@@ -160,13 +166,14 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
           iovec v;
           v.iov_len = bufferSizes[i];
           v.iov_base = i == 0 ? buffer->data() : allocators.back().data();
-          iovecs.push_back(v);
+          reader.addIovec(v);
         }
+        reader.startRead();
         readState = stateSocketReadIovecs;
         [[fallthrough]];
       }
       case stateSocketReadIovecs:
-        if (!socket.readv(iovecs.data(), iovecs.size())) {
+        if (!reader.done()) {
           return;
         } else {
           readState = stateAllDone;
@@ -188,8 +195,7 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
         }
         readState = stateZero;
 
-        auto buf = std::move(buffer);
-        callback(nullptr, std::move(buf));
+        readCallback(nullptr, std::move(buffer));
         break;
       }
       }
