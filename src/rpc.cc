@@ -935,7 +935,7 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
     if (dead.exchange(true)) {
       return;
     }
-    rpc.log(0, "Connection %s (fd %d) closed\n", connectionTypeName[index<API>], API::cast(connection).getFd());
+    rpc.log(0, "Connection %s closed\n", connectionTypeName[index<API>]);
     API::cast(connection).close();
   }
 
@@ -990,7 +990,7 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
     std::memcpy(&fid, ptr, sizeof(uint32_t));
     ptr += sizeof(uint32_t);
     len -= sizeof(uint32_t);
-    rpc.log("onData rid %#x fid %#x from fd %d\n", rid, fid, API::cast(connection).getFd());
+    // rpc.log("onData rid %#x fid %#x from fd %d\n", rid, fid, API::cast(connection).getFd());
     if (peer && fid != reqGreeting) {
       auto& x = peer->connections_.at(index<API>);
       if (now - x.lastRecv.load(std::memory_order_relaxed) >= std::chrono::milliseconds(1)) {
@@ -1539,7 +1539,7 @@ struct Rpc::Impl {
       if (timeout < std::chrono::seconds(1)) {
         timeout = std::chrono::seconds(1);
       }
-      if (!s.hasAddedFailureLatency && now - s.lastSendTimestamp >= timeout) {
+      if (!s.acked && !s.hasAddedFailureLatency && now - s.lastSendTimestamp >= timeout) {
         s.hasAddedFailureLatency = true;
         log(0, "  -- rid %#x to %s   %s failed  (ack is %d)\n", o.rid, o.peer->name, connectionTypeName.at(s.connectionIndex), s.acked);
         switchOnAPI(

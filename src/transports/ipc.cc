@@ -99,14 +99,21 @@ template void Connection::write(SharedBufferHandle, Function<void(Error*)>);
 
 void Connection::close() {
   socket.close();
-  readCallback = nullptr;
 }
 
-void Connection::read(Function<void(Error*, BufferHandle)> callback) {
-  readCallback = std::move(callback);
-  socket.setOnRead([this](Error* error, auto* lock) mutable {
+struct ReadState {
+  Connection* connection;
+  int state = 0;
+  Function<void(Error*, BufferHandle)> callback;
+  std::vector<size_t> bufferSizes;
+  BufferHandle buffer;
+  std::vector<Allocator> allocators;
+  CachedReader reader;
+  ReadState(Connection* connection, Function<void(Error*, BufferHandle)> callback) : connection(connection), reader(&connection->socket), callback(std::move(callback)) {}
+  template<typename Lock>
+  void operator()(Error* error, Lock* lock) {
     if (error) {
-      readCallback(error, nullptr);
+      callback(error, nullptr);
       return;
     }
 
@@ -116,9 +123,9 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
     static constexpr int stateAllDone = 3;
 
     while (true) {
-      switch (readState) {
+      switch (state) {
       default:
-        close();
+        connection->close();
         return;
       case stateZero: {
         void* ptr = reader.readBufferPointer(12);
@@ -132,15 +139,15 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
         case sigSocketData:
           break;
         default:
-          readState = -1;
+          state = -1;
           Error e("bad signature");
-          readCallback(&e, nullptr);
+          callback(&e, nullptr);
           return;
         }
         buffer = makeBuffer(bufferSize, numBuffers - 1);
         bufferSizes.clear();
         bufferSizes.resize(numBuffers);
-        readState = stateSocketReadSizes;
+        state = stateSocketReadSizes;
         reader.newRead();
         reader.addIovec(bufferSizes.data(), bufferSizes.size() * sizeof(size_t));
         reader.startRead();
@@ -152,16 +159,33 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
         }
         if (bufferSizes[0] !=
             size_t((std::byte*)(buffer->tensorMetaDataOffsets() + buffer->nTensors) - buffer->data())) {
-          readState = -1;
+          state = -1;
           Error e("bad buffer size");
-          readCallback(&e, nullptr);
+          callback(&e, nullptr);
           return;
         }
         allocators.clear();
         reader.newRead();
         for (size_t i = 0; i != bufferSizes.size(); ++i) {
           if (i != 0) {
-            allocators.emplace_back(rpc::kCPU, bufferSizes[i]);
+            //allocators.emplace_back(rpc::kCPU, bufferSizes[i]);
+            auto a = memfdAllocator.allocate(bufferSizes[i]);
+            if (!a.first) {
+              Error e("failed to allocated memory");
+              callback(&e, nullptr);
+              return;
+            }
+            Function<void()> func = [a]() {
+              memfdAllocator.deallocate(a.first, a.second);
+            };
+            FunctionPointer f = func.release();
+            try {
+              allocators.emplace_back(a.first, bufferSizes[i], rpc::kCPU, f, [](void* ptr) {
+                Function<void()>((FunctionPointer)ptr)();
+              });
+            } catch (...) {
+              func = f;
+            }
           }
           iovec v;
           v.iov_len = bufferSizes[i];
@@ -169,14 +193,14 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
           reader.addIovec(v);
         }
         reader.startRead();
-        readState = stateSocketReadIovecs;
+        state = stateSocketReadIovecs;
         [[fallthrough]];
       }
       case stateSocketReadIovecs:
         if (!reader.done()) {
           return;
         } else {
-          readState = stateAllDone;
+          state = stateAllDone;
           [[fallthrough]];
         }
       case stateAllDone: {
@@ -193,14 +217,18 @@ void Connection::read(Function<void(Error*, BufferHandle)> callback) {
           deserializeBufferPart(data + offsets[i], len > offsets[i] ? len - offsets[i] : 0, dtype, sizes, strides);
           t = allocators[i].set(dtype, sizes, strides);
         }
-        readState = stateZero;
+        state = stateZero;
 
-        readCallback(nullptr, std::move(buffer));
+        callback(nullptr, std::move(buffer));
         break;
       }
       }
     }
-  });
+  }
+};
+
+void Connection::read(Function<void(Error*, BufferHandle)> callback) {
+  socket.setOnRead(ReadState(this, std::move(callback)));
 }
 
 std::string Connection::localAddress() const {

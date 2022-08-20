@@ -38,8 +38,8 @@ struct Storage {
   ~Storage() {
     for (Header* ptr = freelist; ptr;) {
       Header* next = ptr->next;
-      //memfdAllocator.deallocate(ptr, ptr->capacity + sizeof(Header));
-      std::free(ptr);
+      memfdAllocator.deallocate(ptr, ptr->capacity + sizeof(Header));
+      //std::free(ptr);
       ptr = next;
     }
   }
@@ -59,13 +59,13 @@ struct Storage {
         return allocate();
       }
       l.unlock();
-      r = (Header*)aligned_alloc(64, size);
-      new (r) Header();
-      r->capacity = size - sizeof(Header);
-      // auto a = memfdAllocator.allocate(size);
-      // r = (Header*)a.first;
+      // r = (Header*)aligned_alloc(64, size);
       // new (r) Header();
-      // r->capacity = a.second - sizeof(Header);
+      // r->capacity = size - sizeof(Header);
+      auto a = memfdAllocator.allocate(size);
+      r = (Header*)a.first;
+      new (r) Header();
+      r->capacity = a.second - sizeof(Header);
     } else {
       --freelistSize;
       freelist = r->next;
@@ -134,13 +134,13 @@ Header* allocate(size_t n) {
   } else if (n + overhead <= 4096) {
     return allocimpl::Storage<Header, Data, 4096>::get().allocate();
   } else {
-    Header* h = (Header*)aligned_alloc(64, (sizeof(Header) + sizeof(Data) * n + 63) / 64 * 64);
-    new (h) Header();
-    h->capacity = n;
-    // auto a = memfdAllocator.allocate((sizeof(Header) + sizeof(Data) * n + 63) / 64 * 64);
-    // Header* h = (Header*)a.first;
+    // Header* h = (Header*)aligned_alloc(64, (sizeof(Header) + sizeof(Data) * n + 63) / 64 * 64);
     // new (h) Header();
-    // h->capacity = a.second - sizeof(Header);
+    // h->capacity = n;
+    auto a = memfdAllocator.allocate((sizeof(Header) + sizeof(Data) * n + 63) / 64 * 64);
+    Header* h = (Header*)a.first;
+    new (h) Header();
+    h->capacity = a.second - sizeof(Header);
     return h;
   }
 }
@@ -161,8 +161,8 @@ void deallocate(Header* ptr) {
       printf("large dealloc refcount %d\n", (int)ptr->refcount);
       std::abort();
     }
-    std::free(ptr);
-    //memfdAllocator.deallocate(ptr, ptr->capacity + sizeof(Header));
+    //std::free(ptr);
+    memfdAllocator.deallocate(ptr, ptr->capacity + sizeof(Header));
   }
 }
 template<typename Data, typename Header>

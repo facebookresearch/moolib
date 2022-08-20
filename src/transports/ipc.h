@@ -48,14 +48,8 @@ struct Listener {
 struct ConnectionImpl;
 struct Connection : std::enable_shared_from_this<Connection> {
   Socket socket;
-  int readState = 0;
-  Function<void(Error*, BufferHandle)> readCallback;
-  std::vector<size_t> bufferSizes;
-  BufferHandle buffer;
-  std::vector<Allocator> allocators;
-  CachedReader reader;
 
-  Connection(Socket socket) : socket(std::move(socket)), reader(this->socket) {}
+  Connection(Socket socket) : socket(std::move(socket)) {}
   ~Connection();
 
   void close();

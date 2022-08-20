@@ -1198,23 +1198,23 @@ struct RpcWrapper {
         },
         buffer);
     ENDTIME(callAsyncCallback);
-    thread_local int counter = 0;
-    if (++counter % 10000 == 0) {
-      uint64_t maxvalue = 0;
-      for (size_t i = 0; i != rpc::times.size(); ++i) {
-        if (rpc::times[i] > maxvalue) {
-          maxvalue = rpc::times[i];
-        }
-      }
-      std::string str;
-      for (size_t i = 0; i != rpc::times.size(); ++i) {
-        if (rpc::times[i] > 0) {
-          str += fmt::sprintf("%s: %d (%g%%)\n", rpc::names[i], rpc::times[i], rpc::times[i] / (double)maxvalue * 100);
-        }
-      }
-      fmt::printf("%s", str);
-      std::memset(&rpc::times, 0, sizeof(rpc::times));
-    }
+    // thread_local int counter = 0;
+    // if (++counter % 10000 == 0) {
+    //   uint64_t maxvalue = 0;
+    //   for (size_t i = 0; i != rpc::times.size(); ++i) {
+    //     if (rpc::times[i] > maxvalue) {
+    //       maxvalue = rpc::times[i];
+    //     }
+    //   }
+    //   std::string str;
+    //   for (size_t i = 0; i != rpc::times.size(); ++i) {
+    //     if (rpc::times[i] > 0) {
+    //       str += fmt::sprintf("%s: %d (%g%%)\n", rpc::names[i], rpc::times[i], rpc::times[i] / (double)maxvalue * 100);
+    //     }
+    //   }
+    //   fmt::printf("%s", str);
+    //   std::memset(&rpc::times, 0, sizeof(rpc::times));
+    // }
     TIME(asyncReturn);
     return future;
   }

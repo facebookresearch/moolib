@@ -17,6 +17,8 @@
 #include <type_traits>
 #include <utility>
 
+#include <unordered_map>
+
 namespace rpc {
 
 namespace function {
@@ -316,13 +318,15 @@ public:
   }
 
   Function& operator=(std::nullptr_t) noexcept {
-    if (ops_->dtor) {
-      ops_->dtor(*storage_);
-      ops_ = &impl::NullOps<R, Args...>::value;
-    }
-    if (storage_) {
-      impl::freeStorage(storage_);
-      storage_ = nullptr;
+    auto* storage = storage_;
+    auto* ops = ops_;
+    ops_ = &impl::NullOps<R, Args...>::value;
+    storage_ = nullptr;
+    if (ops->dtor) {
+      ops->dtor(*storage);
+      impl::freeStorage(storage);
+    } else if (storage) {
+      impl::freeStorage(storage);
     }
     return *this;
   }
