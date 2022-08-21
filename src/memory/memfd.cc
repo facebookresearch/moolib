@@ -89,7 +89,7 @@ static Size spanInsert(std::vector<Span>& spans, Span s) {
     if (i != spans.end() && i->begin == s.end) {
       ss.begin = std::prev(i)->begin;
       ss.size = i->end - ss.begin;
-      i = spans.erase(i);
+      i = std::prev(spans.erase(i));
       i->begin = ss.begin;
       i->end = ss.begin + ss.size;
     } else {
