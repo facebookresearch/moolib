@@ -108,6 +108,7 @@ struct CachedReader {
     iovecs.push_back({buffer.data() + bufferFilled, buffer.size() - bufferFilled});
     this->iovecsOffset = iovecsOffset;
   }
+  static constexpr size_t maxBufferSize = 256 * 1024;
   bool done() {
     if (iovecsOffset && iovecsOffset == iovecs.size() - 1) {
       return true;
@@ -115,6 +116,7 @@ struct CachedReader {
     size_t i = iovecsOffset;
     size_t e = iovecs.size() - 1;
     size_t n = socket->readv(iovecs.data() + iovecsOffset, iovecs.size() - iovecsOffset);
+    assert(e >= i);
     for (; i != e; ++i) {
       auto& v = iovecs[i];
       if (n >= v.iov_len) {
@@ -133,7 +135,6 @@ struct CachedReader {
     }
     if (i == e) {
       bufferFilled += n;
-      constexpr size_t maxBufferSize = 256 * 1024;
       if (bufferFilled == buffer.size() && buffer.size() < maxBufferSize) {
         buffer.resize(std::max(std::min(buffer.size() * 2, maxBufferSize), (size_t)4096));
       }
@@ -148,7 +149,7 @@ struct CachedReader {
       return buffer.data() + o;
     }
     if (buffer.size() < bufferOffset + len) {
-      buffer.resize(bufferOffset + len);
+      buffer.resize(std::max((size_t)(bufferOffset + len), buffer.size() + buffer.size() / 2));
     }
     newRead();
     startRead();
@@ -156,6 +157,10 @@ struct CachedReader {
     if (bufferFilled - bufferOffset >= len) {
       size_t o = bufferOffset;
       bufferOffset += len;
+      if (bufferOffset == bufferFilled) {
+        bufferOffset = 0;
+        bufferFilled = 0;
+      }
       return buffer.data() + o;
     }
     return nullptr;

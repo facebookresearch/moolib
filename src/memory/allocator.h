@@ -46,51 +46,47 @@ struct Storage {
 
   inline static GlobalList global;
 
+  Header* allocateFromGlobal() {
+    std::unique_lock l(global.mutex);
+    if (!global.list.empty()) {
+      freelist = global.list.back().first;
+      freelistSize = global.list.back().second;
+      global.list.pop_back();
+      l.unlock();
+      return allocate();
+    }
+    l.unlock();
+    // Header* r = (Header*)aligned_alloc(64, size);
+    // new (r) Header();
+    // r->capacity = size - sizeof(Header);
+    auto a = memfdAllocator.allocate(size);
+    Header* r = (Header*)a.first;
+    new (r) Header();
+    r->capacity = a.second - sizeof(Header);
+    return r;
+  }
+
   Header* allocate() {
     static_assert(alignof(Header) <= 64 && alignof(Data) <= 64 && alignof(Data) <= sizeof(Header));
     Header* r = freelist;
-    if (!r) {
-      std::unique_lock l(global.mutex);
-      if (!global.list.empty()) {
-        freelist = global.list.back().first;
-        freelistSize = global.list.back().second;
-        global.list.pop_back();
-        l.unlock();
-        return allocate();
-      }
-      l.unlock();
-      // r = (Header*)aligned_alloc(64, size);
-      // new (r) Header();
-      // r->capacity = size - sizeof(Header);
-      auto a = memfdAllocator.allocate(size);
-      r = (Header*)a.first;
-      new (r) Header();
-      r->capacity = a.second - sizeof(Header);
-    } else {
+    if (r) {
       --freelistSize;
       freelist = r->next;
-      if (r->capacity < size - sizeof(Header)) {
-        printf("cap mismatch\n");
-        std::abort();
-      }
+      return r;
+    } else {
+      return allocateFromGlobal();
     }
-    if (r->refcount != 0) {
-      printf("alloc refcount is %d\n", (int)r->refcount);
-      std::abort();
-    }
-    return r;
+  }
+  void moveFreelistToGlobal() {
+    std::unique_lock l(global.mutex);
+    global.list.push_back({freelist, freelistSize});
+    l.unlock();
+    freelist = nullptr;
+    freelistSize = 0;
   }
   void deallocate(Header* ptr) {
-    if (ptr->refcount != 0) {
-      printf("ptr->refcount is %d\n", (int)ptr->refcount);
-      std::abort();
-    }
     if (freelistSize >= std::min<size_t>(1024 * 1024 / Size, 128)) {
-      std::unique_lock l(global.mutex);
-      global.list.push_back({freelist, freelistSize});
-      l.unlock();
-      freelist = nullptr;
-      freelistSize = 0;
+      moveFreelistToGlobal();
     }
     ++freelistSize;
     ptr->next = freelist;
@@ -156,12 +152,6 @@ void deallocate(Header* ptr) {
   } else if (n <= 4096 + 1024) {
     allocimpl::Storage<Header, Data, 4096>::get().deallocate(ptr);
   } else {
-    //printf("n is %d\n", n); 
-    if (n <= 4096 || ptr->refcount != 0) {
-      printf("large dealloc refcount %d\n", (int)ptr->refcount);
-      std::abort();
-    }
-    //std::free(ptr);
     memfdAllocator.deallocate(ptr, ptr->capacity + sizeof(Header));
   }
 }

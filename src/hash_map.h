@@ -269,7 +269,7 @@ public:
       printf("bucket count is not a multiple of 2!\n");
       std::abort();
     }
-    printf("rehash %d %d\n", newBs, size());
+    //printf("rehash %lu %lu\n", newBs, size());
     PrimaryItem* oldPrimary = primary;
     SecondaryItem* oldSecondary = secondary;
     

@@ -166,26 +166,40 @@ struct ReadState {
         }
         allocators.clear();
         reader.newRead();
+        size_t sizeSum = 0;
+        for (size_t i = 1; i != bufferSizes.size(); ++i) {
+          sizeSum += bufferSizes[i];
+        }
         for (size_t i = 0; i != bufferSizes.size(); ++i) {
           if (i != 0) {
             //allocators.emplace_back(rpc::kCPU, bufferSizes[i]);
-            auto a = memfdAllocator.allocate(bufferSizes[i]);
-            if (!a.first) {
-              Error e("failed to allocated memory");
-              callback(&e, nullptr);
-              return;
-            }
-            Function<void()> func = [a]() {
-              memfdAllocator.deallocate(a.first, a.second);
-            };
-            FunctionPointer f = func.release();
+            auto h = makeBuffer(bufferSizes[i], 0);
+            void* data = h->data();
+            Buffer* bufferPointer = h.release();
             try {
-              allocators.emplace_back(a.first, bufferSizes[i], rpc::kCPU, f, [](void* ptr) {
-                Function<void()>((FunctionPointer)ptr)();
+              allocators.emplace_back(data, bufferSizes[i], rpc::kCPU, bufferPointer, [](void* ptr) {
+                BufferHandle{(Buffer*)ptr};
               });
             } catch (...) {
-              func = f;
+              h = BufferHandle(bufferPointer);
             }
+            // auto a = memfdAllocator.allocate(bufferSizes[i]);
+            // if (!a.first) {
+            //   Error e("failed to allocated memory");
+            //   callback(&e, nullptr);
+            //   return;
+            // }
+            // Function<void()> func = [a]() {
+            //   memfdAllocator.deallocate(a.first, a.second);
+            // };
+            // FunctionPointer f = func.release();
+            // try {
+            //   allocators.emplace_back(a.first, bufferSizes[i], rpc::kCPU, f, [](void* ptr) {
+            //     Function<void()>((FunctionPointer)ptr)();
+            //   });
+            // } catch (...) {
+            //   func = f;
+            // }
           }
           iovec v;
           v.iov_len = bufferSizes[i];

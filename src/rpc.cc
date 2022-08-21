@@ -869,7 +869,7 @@ struct PeerImpl {
 
   void throwAway(Connection& x, size_t i) {
     auto cv = std::move(x.conns[i]);
-    log("Throwing away connection %s to %s\n", connectionTypeName.at(cv->apiIndex()), name);
+    log(0, "Throwing away connection %s to %s\n", connectionTypeName.at(cv->apiIndex()), name);
     std::swap(x.conns.back(), x.conns[i]);
     x.conns.pop_back();
     if (x.conns.empty()) {
@@ -2930,11 +2930,13 @@ struct RpcImpl : RpcImplBase {
             while (true) {
               std::unique_lock l(cache->mutex);
               if (cache->inited) {
-                std::unique_lock l2(rpc->functionCachesMutex, std::try_to_lock);
-                if (!hasLock && !l2.owns_lock()) {
-                  l.unlock();
-                  std::this_thread::yield();
-                  continue;
+                std::unique_lock l2(rpc->functionCachesMutex, std::defer_lock);
+                if (!hasLock) {
+                  if (!l2.try_lock()) {
+                    l.unlock();
+                    std::this_thread::yield();
+                    continue;
+                  }
                 }
                 cache->inited = false;
                 cache->map.clear();
@@ -3042,7 +3044,7 @@ struct RpcImpl : RpcImplBase {
     rid |= 1;
     switch (fid) {
     case reqClose: {
-      log("got reqClose from %s\n", peer.name);
+      log(0, "got reqClose from %s\n", peer.name);
       auto& x = peer.connections_.at(index<API>);
       std::lock_guard l(x.mutex);
       for (size_t i = 0; i != x.conns.size(); ++i) {
