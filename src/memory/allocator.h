@@ -62,7 +62,7 @@ struct Storage {
     auto a = memfdAllocator.allocate(size);
     Header* r = (Header*)a.first;
     new (r) Header();
-    r->capacity = a.second - sizeof(Header);
+    r->capacity = size - sizeof(Header);
     return r;
   }
 
@@ -143,15 +143,19 @@ Header* allocate(size_t n) {
 template<typename Header, typename Data>
 void deallocate(Header* ptr) {
   const size_t n = ptr->capacity + sizeof(Header);
-  if (n < 256) {
+  if (n == 64) {
     allocimpl::Storage<Header, Data, 64>::get().deallocate(ptr);
-  } else if (n < 1024) {
+  } else if (n == 256) {
     allocimpl::Storage<Header, Data, 256>::get().deallocate(ptr);
-  } else if (n < 4096) {
+  } else if (n == 1024) {
     allocimpl::Storage<Header, Data, 1024>::get().deallocate(ptr);
-  } else if (n <= 4096 + 1024) {
+  } else if (n == 4096) {
     allocimpl::Storage<Header, Data, 4096>::get().deallocate(ptr);
   } else {
+    if (n <= 4096) {
+      printf("n is %d\n", n);
+      std::abort();
+    }
     memfdAllocator.deallocate(ptr, ptr->capacity + sizeof(Header));
   }
 }

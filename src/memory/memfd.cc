@@ -1,6 +1,7 @@
 
 #include "memfd.h"
 #include "synchronization.h"
+#include "vector.h"
 
 #include "fmt/printf.h"
 
@@ -9,9 +10,14 @@
 #include <utility>
 #include <system_error>
 #include <memory>
+#include <cstddef>
 
 #include <unistd.h>
 #include <sys/mman.h>
+
+#undef assert
+#define assert(x) (bool(x) ? 0 : (printf("assert failure %s:%d\n", __FILE__, __LINE__), std::abort(), 0))
+//#define assert(x)
 
 namespace rpc {
 
@@ -70,104 +76,206 @@ Memfd Memfd::map(int fd, size_t size) {
   return r;
 }
 
-struct Span {
-  uintptr_t begin;
-  uintptr_t end;
-};
-
-struct Size {
-  size_t size;
-  uintptr_t begin;
-};
-
-static Size spanInsert(std::vector<Span>& spans, Span s) {
-  auto i = std::lower_bound(spans.begin(), spans.end(), s.begin, [](auto& a, uintptr_t b) {
-    return a.begin < b;
-  });
-  Size ss;
-  if (i != spans.begin() && std::prev(i)->end == s.begin) {
-    if (i != spans.end() && i->begin == s.end) {
-      ss.begin = std::prev(i)->begin;
-      ss.size = i->end - ss.begin;
-      i = std::prev(spans.erase(i));
-      i->begin = ss.begin;
-      i->end = ss.begin + ss.size;
-    } else {
-      i = std::prev(i);
-      i->end = s.end;
-      ss.size = i->end - i->begin;
-      ss.begin = i->begin;
-    }
-  } else if (i != spans.end() && i->begin == s.end) {
-    i->begin = s.begin;
-    ss.size = i->end - i->begin;
-    ss.begin = i->begin;
-  } else {
-    spans.insert(i, s);
-    ss.size = s.end - s.begin;
-    ss.begin = s.begin;
-  }
-  return ss;
-}
-
 struct AllocatorImpl {
-  std::vector<Span> spans;
-  std::vector<Size> sizes;
-  void addArea(void* base, size_t size) {
-    Span s;
-    s.begin = (uintptr_t)base;
-    s.end = s.begin + size;
-    insert(s);
+
+  std::unordered_map<uintptr_t, uintptr_t> beginMap;
+  std::unordered_map<uintptr_t, uintptr_t> endMap;
+  
+  static_assert(sizeof(long) == sizeof(size_t));
+  static constexpr size_t sizeBits = 8 * sizeof(size_t);
+  size_t bucketBits = 0;
+  std::array<uint8_t, sizeBits> subBucketBits;
+
+  std::array<std::vector<uintptr_t>, 8 * sizeBits> spans;
+
+  size_t totalAvailableSize = 0;
+  size_t totalAllocatedSize = 0;
+
+  size_t getSizeFor(size_t index, size_t subindex) {
+    return (1ul << index) + ((1ul << (index - 3)) * (1 + subindex));
   }
-  std::pair<void*, size_t> allocate(size_t size) {
-    size = (size + 63) / 64u * 64u;
-    auto i = std::lower_bound(sizes.begin(), sizes.end(), size, [](auto& a, size_t b) {
-      return a.size < b;
-    });
-    auto ii = i;
-    while (i != sizes.end()) {
-      uintptr_t begin = i->begin;
-      ++i;
-      auto i2 = std::lower_bound(spans.begin(), spans.end(), begin, [](auto& a, uintptr_t b) {
-        return a.begin < b;
-      });
-      if (i2 == spans.end() || i2->begin != begin || i2->end - i2->begin < size) {
-        while (i != sizes.end() && i->begin == begin) {
-          ++i;
-        }
-        continue;
-      }
-      sizes.erase(ii, i);
-      size_t space = i2->end - i2->begin;
-      if (space - size < std::min((size_t)4096, size / 2u)) {
-        size = space;
-        spans.erase(i2);
+
+  template<typename T>
+  size_t ctz(T v) {
+    static_assert(sizeof(T) == sizeof(long));
+    return __builtin_ctzl(v);
+  }
+  template<typename T>
+  size_t clz(T v) {
+    static_assert(sizeof(T) == sizeof(long));
+    return __builtin_clzl(v);
+  }
+
+  template<bool isDeallocation = false>
+  void addArea(void* ptr, size_t size) {
+    while (size >= (isDeallocation ? 0 : alignof(std::max_align_t))) {
+      assert(((uintptr_t)ptr & (alignof(std::max_align_t) - 1)) == 0);
+      assert(size >= alignof(std::max_align_t));
+      size_t index;
+      size_t subindex;
+      size_t nsize;
+      if (!isDeallocation) {
+        index = sizeBits - 1 - clz(size);
+        subindex = (size >> (index - 3)) & 7;
+        nsize = (1ul << index) | ((1ul << (index - 3)) * subindex);
+        index = sizeBits - 1 - clz(nsize - 1);
+        subindex = ((nsize - 1) >> (index - 3)) & 7;
+        //fmt::printf("adding area of size %d (lost %d) at %#x  (index %d subindex %d)\n", nsize, size - nsize, (uintptr_t)ptr, index, subindex);
       } else {
-        i2->begin += size;
-        Size ss;
-        ss.begin = i2->begin;
-        ss.size = i2->end - i2->begin;
-        sizes.insert(std::lower_bound(sizes.begin(), sizes.end(), ss.size, [](auto& a, size_t b) {
-          return a.size < b;
-        }), ss);
+        index = sizeBits - 1 - clz((size - 1) | 8);
+        subindex = ((size - 1) >> (index - 3)) & 7;
+        assert(size == getSizeFor(index, subindex));
+        nsize = size;
+        //fmt::printf("deallocate area of size %d (lost %d) at %#x  (index %d subindex %d)\n", nsize, size - nsize, (uintptr_t)ptr, index, subindex);
       }
-      //fmt::printf("allocate -> %p, %d\n", (void*)begin, size);
-      return {(void*)begin, size};
+      //fmt::printf("index %d subindex %d\n", index, subindex);
+      bucketBits |= 1ul << index;
+      subBucketBits[index] |= 1ul << subindex;
+      //fmt::printf("add address %#x to full index %d\n", (uintptr_t)ptr, index * 8u + subindex);
+      spans[index * 8u + subindex].push_back((uintptr_t)ptr);
+      ptr = (void*)((char*)ptr + nsize);
+      size -= nsize;
+      if (isDeallocation) {
+        assert(size == 0);
+        break;
+      }
     }
-    //fmt::printf("allocate failed\n");
-    sizes.erase(ii, i);
-    return {nullptr, 0};
   }
+
+  std::pair<void*, size_t> allocate(size_t size) {
+    size = (size + alignof(std::max_align_t) - 1) & ~(alignof(std::max_align_t) - 1);
+    size_t index = sizeBits - 1 - clz((size - 1) | 8);
+    size_t subindex = ((size - 1) >> (index - 3)) & 7;
+
+    //fmt::printf("allocate size %d, index %d, subindex %d\n", size, index, subindex);
+
+    assert(getSizeFor(index, subindex) >= size);
+
+    size_t bits = bucketBits;
+
+    // if (bits & (1ul << index)) {
+    //   uint8_t subBits = subBucketBits[index];
+    //   if (subBits & (1ul << subindex)) {
+    //       fmt::printf("perfect match full index %d\n", index * 8u + subindex);
+    //       auto& vec = spans[index * 8u + subindex];
+    //       assert(!vec.empty());
+    //       auto r = vec.back();
+    //       fmt::printf("%d %d  %#x %#x\n", getSizeFor(index, subindex), r.end - r.begin, r.begin, r.end);
+    //       assert(r.begin + getSizeFor(index, subindex) == r.end);
+    //       vec.pop_back();
+    //       fmt::printf("found perfect match for allocation of size %d\n", size);
+    //       if (vec.empty()) {
+    //         fmt::printf("subindex %d is now empty\n", subindex);
+    //         subBits &= ~(1ul << subindex);
+    //         subBucketBits[subindex] = subBits;
+    //         if (subBits == 0) {
+    //           bucketBits &= ~(1ul << index);
+    //           fmt::printf("index %d is now empty\n", index);
+    //         }
+    //       }
+    //       return {(void*)r.begin, r.end - r.begin};
+    //   }
+    // }
+
+    bool perfectMatch = false;
+    bool partialMatch = false;
+    size_t freeIndex;
+    size_t freeSubindex;
+    uint8_t subBits;
+    size_t allocSize = getSizeFor(index, subindex);
+    size_t spanSize;
+
+    if (bits & (1ul << index)) {
+      subBits = subBucketBits[index];
+      if (subBits & (1ul << subindex)) {
+        freeIndex = index;
+        freeSubindex = subindex;
+        perfectMatch = true;
+        spanSize = allocSize;
+      } else {
+        subBits >>= subindex;
+        subBits <<= subindex;
+        if (subBits != 0) {
+          freeIndex = index;
+          freeSubindex = ctz((size_t)subBits);
+          spanSize = getSizeFor(freeIndex, freeSubindex);
+          partialMatch = true;
+        }
+      }
+    }
+    if (!perfectMatch && !partialMatch) {
+      bits >>= index + 1;
+      bits <<= index + 1;
+      if (bits == 0) {
+        [[unlikely]];
+        //fmt::printf("no free bits for allocation of size %d\n", size);
+        return {nullptr, 0};
+      }
+      freeIndex = ctz(bits);
+      subBits = subBucketBits[freeIndex];
+      freeSubindex = ctz((size_t)subBits);
+      spanSize = getSizeFor(freeIndex, freeSubindex);
+      assert(spanSize > allocSize);
+    }
+    assert(subBits);
+
+
+    //fmt::printf("found free index %d %d for allocation of size %d  (alloc size %d span size %d)\n", freeIndex, freeSubindex, size, allocSize, spanSize);
+
+    assert(spanSize >= allocSize);
+
+    auto& vec = spans[freeIndex * 8u + freeSubindex];
+    assert(!vec.empty());
+    uintptr_t ptr = vec.back();
+    //assert(s.begin + spanSize == s.end);
+    vec.pop_back();
+    if (vec.empty()) {
+      //fmt::printf("subindex %d is now empty\n", freeSubindex);
+      subBits &= ~(1ul << freeSubindex);
+      subBucketBits[freeIndex] = subBits;
+      if (subBits == 0) {
+        bucketBits &= ~(1ul << freeIndex);
+        //fmt::printf("index %d is now empty\n", freeIndex);
+      }
+    }
+    if (!perfectMatch) {
+      addArea<false>((void*)(ptr + allocSize), spanSize - allocSize);
+    }
+    totalAllocatedSize += allocSize;
+    //fmt::printf("returning %#x %d\n", s.begin, allocSize);
+    return {(void*)ptr, allocSize};
+  }
+
+// find highest set bit.
+// 56 bits? 56 top level buckets.
+// look at next 4 bits to get sub-bucket (8 sub-buckets)
+// return top element
+// empty ? try again at next higher bucket
+//        use bitsets to speed up finding a non-empty bucket
+
   void deallocate(void* ptr, size_t size) {
     //fmt::printf("deallocate %p, %d\n", ptr, size);
-    addArea(ptr, size);
+    totalAllocatedSize -= size;
+    addArea<true>(ptr, size);
   }
 
-  void insert(Span s) {
-    Size ss = spanInsert(spans, s);
-    sizes.insert(std::lower_bound(sizes.begin(), sizes.end(), ss.size, [](auto& a, size_t b) {
-      return a.size < b;
-    }), ss);
+  void debugInfo() {
+    fmt::printf("total allocated: %dM / %dM\n", totalAllocatedSize / 1024 / 1024, totalAvailableSize / 1024 / 1024);
+
+    fmt::printf("bucketBits: %#x\n", bucketBits);
+    
+    size_t nChunks = 0;
+    size_t sum = 0;
+    for (size_t i = 0; i != spans.size(); ++i) {
+      size_t index = i / 8;
+      size_t subindex = i % 8;
+      if (!spans[i].empty()) {
+        nChunks += spans[i].size();
+        sum += getSizeFor(index, subindex) * spans[i].size();
+        //fmt::printf("index %d %d (size %d) has %d chunks  (sum %d)\n", index, subindex, getSizeFor(index, subindex), spans[i].size(), sum);
+      }
+    }
+    fmt::printf(" total %d chunks, sum %dM\n", nChunks, sum / 1024 / 1024);
   }
 };
 
@@ -210,45 +318,56 @@ struct MemfdAllocatorImpl {
       return {};
     }
   }
-  std::pair<void*, size_t> allocate(size_t size) {
-    std::lock_guard l(mutex);
-    while (true) {
-      auto r = allocator.allocate(size);
-      if (!r.first) {
-        size_t memsize = std::max(allocated, size);
-        if (memsize > size + 1024 * 1024 * 256) {
-          if (allocated / 2 > size) {
-            memsize = allocated / 2;
-          }
-        }
-        if (memsize < 1024 * 1024 * 32) {
-          memsize = 1024 * 1024 * 32;
-        }
-        memsize = (memsize + 1024 * 1024 * 2 - 1) / (1024u * 1024 * 2) * (1024u * 1024 * 2);
-        if (memsize < size + 1024 * 1024) {
-          memsize += 1024 * 1024;
-        }
-        fmt::printf("memfd create %d (%dM) bytes\n", memsize, memsize / 1024 / 1024);
-        auto memfd = Memfd::create(memsize);
-        void* base = memfd.base;
-        allocator.addArea((char*)base + 64, memfd.size - 128);
-        auto* ptr = &fdToMemfd[memfd.fd];
-        *ptr = {};
-        ptr->memfd = std::move(memfd);
-        memfds.insert(std::lower_bound(memfds.begin(), memfds.end(), (uintptr_t)base, [](auto& a, uintptr_t b) {
-          return (uintptr_t)a->memfd.base < b;
-        }), ptr);
-        allocated += memsize;
-        fmt::printf("allocated -> %dM\n", allocated / 1024 / 1024);
-      } else {
-        //fmt::printf("allocate [%#x, %#x)\n", (uintptr_t)r.first, (uintptr_t)r.first + r.second);
-        return r;
+  void expand(size_t size) {
+    allocator.debugInfo();
+
+    size_t memsize = std::max(allocated, size);
+    if (memsize > size + 1024 * 1024 * 256) {
+      if (allocated / 2 > size) {
+        memsize = allocated / 2;
       }
+    }
+    if (memsize < 1024 * 1024 * 32) {
+      memsize = 1024 * 1024 * 32;
+    }
+    memsize = (memsize + 1024 * 1024 * 2 - 1) / (1024u * 1024 * 2) * (1024u * 1024 * 2);
+    if (memsize < size + 1024 * 1024) {
+      memsize += 1024 * 1024;
+    }
+    memsize += 4096;
+    fmt::printf("memfd create %d (%dM) bytes\n", memsize, memsize / 1024 / 1024);
+    auto memfd = Memfd::create(memsize);
+    void* base = memfd.base;
+    allocator.addArea((char*)base + 64, memfd.size - 128);
+    allocator.totalAvailableSize += memfd.size - 128;
+    auto* ptr = &fdToMemfd[memfd.fd];
+    *ptr = {};
+    ptr->memfd = std::move(memfd);
+    memfds.insert(std::lower_bound(memfds.begin(), memfds.end(), (uintptr_t)base, [](auto& a, uintptr_t b) {
+      return (uintptr_t)a->memfd.base < b;
+    }), ptr);
+    allocated += memsize;
+    fmt::printf("allocated -> %dM\n", allocated / 1024 / 1024);
+    //if (allocated >= 1024ull * 1024 * 1024 * 4) std::abort();
+  }
+  [[gnu::noinline]] [[gnu::cold]]
+  std::pair<void*, size_t> expandAndAllocate(size_t size) {
+    std::lock_guard l(mutex);
+    expand(size);
+    return allocator.allocate(size);
+  }
+  std::pair<void*, size_t> allocate(size_t size) {
+    auto r = allocator.allocate(size);
+    if (r.first) {
+      [[likely]];
+      return r;
+    } else {
+      return expandAndAllocate(size);
     }
   }
   void deallocate(void* ptr, size_t size) {
     //fmt::printf("deallocate [%#x, %#x)\n", (uintptr_t)ptr, (uintptr_t)ptr + size);
-    std::lock_guard l(mutex);
+    //std::lock_guard l(mutex);
     allocator.deallocate(ptr, size);
   }
 
@@ -279,6 +398,10 @@ void MemfdAllocator::deallocate(void* ptr, size_t size) {
 
 std::pair<void*, size_t> MemfdAllocator::getMemfd(int fd) {
   return impl->getMemfd(fd);
+}
+
+void MemfdAllocator::debugInfo() {
+  return impl->allocator.debugInfo();
 }
 
 }
