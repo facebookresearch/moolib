@@ -153,9 +153,10 @@ void deallocate(Header* ptr) {
     allocimpl::Storage<Header, Data, 4096>::get().deallocate(ptr);
   } else {
     if (n <= 4096) {
-      printf("n is %d\n", n);
+      printf("allocator n is %d\n", (int)n);
       std::abort();
     }
+    //std::free(ptr);
     memfdAllocator.deallocate(ptr, ptr->capacity + sizeof(Header));
   }
 }

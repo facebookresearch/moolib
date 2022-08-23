@@ -3,6 +3,7 @@
 #include <utility>
 #include <cstdlib>
 #include <new>
+#include <cstring>
 
 namespace moolib {
 
@@ -203,6 +204,17 @@ struct Vector {
     new (endptr) T(std::forward<Args>(args)...);
     ++endptr;
     ++msize;
+  }
+  T& front() {
+    return *beginptr;
+  }
+  T& back() {
+    return endptr[-1];
+  }
+  void pop_back() {
+    --endptr;
+    --msize;
+    endptr->~T();
   }
 };
 
