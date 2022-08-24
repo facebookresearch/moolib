@@ -445,4 +445,14 @@ std::string_view deserializeBufferPart(Buffer* buffer, T&... result) {
   return des.buf;
 }
 
+template<typename T>
+struct SerializeFunction {
+  const T& f;
+  SerializeFunction(const T& f) : f(f) {}
+  template<typename X>
+  void serialize(X& x) {
+    f(x);
+  }
+};
+
 } // namespace rpc

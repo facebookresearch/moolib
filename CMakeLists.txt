@@ -42,8 +42,10 @@ target_compile_options(tensor PRIVATE ${TORCH_CXX_FLAGS})
 add_library(moorpc OBJECT
   src/rpc.cc
   src/async.cc
+  src/transports/socket.cc
+  src/transports/ipc.cc
 )
-target_link_libraries(moorpc PUBLIC tensor fmt tensorpipe)
+target_link_libraries(moorpc PUBLIC tensor fmt tensorpipe anl)
 target_include_directories(moorpc PRIVATE src/tensorpipe src)
 
 if (USE_CUDA)
@@ -66,6 +68,7 @@ target_link_libraries(
   $<TARGET_PROPERTY:moorpc,LINK_LIBRARIES>
   ${TorchPath}/lib/libtorch_python${CMAKE_SHARED_LIBRARY_SUFFIX}
 )
+target_include_directories(_C PRIVATE src)
 
 set_source_files_properties(src/tensorpython.cc PROPERTIES INCLUDE_DIRECTORIES "${TORCH_INCLUDE_DIRS}")
 set_source_files_properties(src/tensorpython.cc PROPERTIES COMPILE_FLAGS "${TORCH_CXX_FLAGS}")
