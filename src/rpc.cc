@@ -31,8 +31,7 @@ thread_local bool timeEnabled = false;
 thread_local bool callbackScheduledFromBackend = false;
 
 template<typename Key, typename Value, typename Hash = std::hash<Key>>
-using HashMap = std::unordered_map<Key, Value, Hash>;
-// using HashMap = moolib::HashMap<Key, Value, Hash>;
+using HashMap = moolib::HashMap<Key, Value, Hash>;
 
 async::SchedulerFifo scheduler;
 
