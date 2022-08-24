@@ -15,8 +15,8 @@
 #include <sys/mman.h>
 
 #undef assert
-//#define assert(x) (bool(x) ? 0 : (printf("assert failure %s:%d\n", __FILE__, __LINE__), std::abort(), 0))
-#define assert(x) (bool(x) ? 0 : (__builtin_unreachable(), 0))
+#define assert(x) (bool(x) ? 0 : (printf("assert failure %s:%d\n", __FILE__, __LINE__), std::abort(), 0))
+//#define assert(x) (bool(x) ? 0 : (__builtin_unreachable(), 0))
 //#define assert(x)
 
 namespace rpc {
@@ -66,15 +66,20 @@ Memfd Memfd::map(int fd, size_t size) {
   return r;
 }
 
-struct AllocatorImpl {
+struct alignas(64) AllocatorImpl {
   static_assert(sizeof(long) == sizeof(size_t));
   static constexpr size_t sizeBits = 8 * sizeof(size_t);
-  size_t bucketBits = 0;
-  std::array<uint8_t, sizeBits> subBucketBits;
+  std::atomic_size_t bucketBits = 0;
+  std::array<std::atomic_uint8_t, sizeBits> subBucketBits;
 
-  std::array<uintptr_t, 8 * sizeBits> spanCurrent{};
+  std::array<std::atomic_uintptr_t, 8 * sizeBits> spanCurrent{};
+  //std::array<std::atomic_uintptr_t, 8 * sizeBits> spanTop{};
   std::array<uintptr_t*, 8 * sizeBits> spanBegin{};
   std::array<uintptr_t*, 8 * sizeBits> spanEnd{};
+
+  std::array<SpinMutex, 8 * sizeBits> spanMutex;
+  
+  static_assert(sizeof(std::atomic_uintptr_t) == sizeof(uintptr_t) && alignof(std::atomic_uintptr_t) == alignof(uintptr_t));
 
   ~AllocatorImpl() {
     for (auto& v : spanBegin) {
@@ -82,15 +87,18 @@ struct AllocatorImpl {
         std::free(v);
       }
     }
-    spanCurrent.fill(0);
+    for (auto& v : spanCurrent) {
+      v = 0;
+    }
     spanBegin.fill(nullptr);
     spanEnd.fill(nullptr);
   }
 
-  void expandPushSpan(size_t index, uintptr_t value) {
+  void expandPushSpan(size_t cur, size_t index, uintptr_t value) {
+    size_t prev = cur;
     uintptr_t* begin = spanBegin[index];
-    assert((spanCurrent[index] & 7) == 0);
-    size_t n = (uintptr_t*)spanCurrent[index] - begin;
+    assert((cur & 7) == 0);
+    size_t n = (uintptr_t*)cur - begin;
     size_t newSize = std::max(n + n / (size_t)2, (size_t)3) + 1;
     uintptr_t* ptr = (uintptr_t*)std::malloc(sizeof(uintptr_t) * newSize);
     uintptr_t* end = ptr + newSize;
@@ -105,26 +113,47 @@ struct AllocatorImpl {
     assert(newSize > n);
     ptr[newSize - 1] = 2;
     spanBegin[index] = ptr;
-    spanCurrent[index] = (uintptr_t)(ptr + n);
+    cur = (uintptr_t)(ptr + n);
     spanEnd[index] = ptr + newSize;
+    uintptr_t prevprev = prev;
+    while (!spanCurrent[index].compare_exchange_weak(prev, cur)) {
+      --n;
+      intptr_t diff = prev - prevprev;
+      assert(diff <= 0 && -diff <= n);
+      n += diff;
+      if (n == 0) {
+        value |= 1;
+      } else {
+        value &= ~(size_t)1;
+      }
+      ptr[n] = value;
+      ++n;
+      cur = (uintptr_t)(ptr + n);
+      prevprev = prev;
+    }
     if (begin) {
       std::free(begin);
     }
   }
 
   void pushSpan(size_t index, uintptr_t value) {
-    uintptr_t cur = spanCurrent[index];
-    //fmt::printf("pushSpan, index %d, value %#x, cur %#x\n", index, value, cur);
-    if (!cur || *(uintptr_t*)cur == 2) {
+    std::lock_guard l(spanMutex[index]);
+    uintptr_t cur = spanCurrent[index].load(std::memory_order_relaxed);
+    uintptr_t prev = cur;
+retry:
+    if (!cur || (*(std::atomic_uintptr_t*)cur).load(std::memory_order_relaxed) == 2) {
       [[unlikely]];
-      expandPushSpan(index, value);
+      expandPushSpan(cur, index, value);
     } else {
       assert(cur < (uintptr_t)spanEnd[index] - 8);
       uintptr_t lowbits = cur & (size_t)3;
       value |= lowbits;
       cur &= ~(size_t)3;
-      *(uintptr_t*)cur = value;
-      spanCurrent[index] = cur + sizeof(uintptr_t);
+      (*(std::atomic_uintptr_t*)cur).store(value, std::memory_order_relaxed);
+      if (!spanCurrent[index].compare_exchange_strong(prev, cur + sizeof(uintptr_t))) {
+        cur = prev;
+        goto retry;
+      }
     }
 
     // fmt::printf("span %d post push:\n", index);
@@ -176,11 +205,11 @@ struct AllocatorImpl {
         //fmt::printf("deallocate area of size %d (lost %d) at %#x  (index %d subindex %d)\n", nsize, size - nsize, address, index, subindex);
       }
       //fmt::printf("index %d subindex %d\n", index, subindex);
-      bucketBits |= 1ul << index;
-      subBucketBits[index] |= 1ul << subindex;
       //fmt::printf("add address %#x to full index %d\n", address, index * 8u + subindex);
       assert(nsize == getSizeFor(index, subindex));
       pushSpan(index * 8u + subindex, address);
+      bucketBits.fetch_or(1ul << index, std::memory_order_relaxed);
+      subBucketBits[index].fetch_or(1ul << subindex, std::memory_order_relaxed);
       address += nsize;
       size -= nsize;
       if (isDeallocation) {
@@ -193,49 +222,24 @@ struct AllocatorImpl {
   [[gnu::always_inline]]
   std::pair<void*, size_t> allocate(size_t size) {
     size = (size + alignof(std::max_align_t) - 1) & ~(alignof(std::max_align_t) - 1);
-    size_t index = sizeBits - 1 - clz((size - 1) | 8);
-    size_t subindex = ((size - 1) >> (index - 3)) & 7;
+    const size_t index = sizeBits - 1 - clz((size - 1) | 8);
+    const size_t subindex = ((size - 1) >> (index - 3)) & 7;
+
+    const size_t allocSize = getSizeFor(index, subindex);
 
     //fmt::printf("allocate size %d, index %d, subindex %d\n", size, index, subindex);
 
-    assert(getSizeFor(index, subindex) >= size);
+    assert(allocSize >= size);
+
+retryall:
 
     size_t bits = bucketBits;
-
-    // if (bits & (1ul << index)) {
-    //   uint8_t subBits = subBucketBits[index];
-    //   if (subBits & (1ul << subindex)) {
-    //       fmt::printf("perfect match full index %d\n", index * 8u + subindex);
-    //       auto& vec = spans[index * 8u + subindex];
-    //       assert(!vec.empty());
-    //       auto r = vec.back();
-    //       fmt::printf("%d %d  %#x %#x\n", getSizeFor(index, subindex), r.end - r.begin, r.begin, r.end);
-    //       assert(r.begin + getSizeFor(index, subindex) == r.end);
-    //       vec.pop_back();
-    //       fmt::printf("found perfect match for allocation of size %d\n", size);
-    //       if (vec.empty()) {
-    //         fmt::printf("subindex %d is now empty\n", subindex);
-    //         subBits &= ~(1ul << subindex);
-    //         subBucketBits[subindex] = subBits;
-    //         if (subBits == 0) {
-    //           bucketBits &= ~(1ul << index);
-    //           fmt::printf("index %d is now empty\n", index);
-    //         }
-    //       }
-    //       return {(void*)r.begin, r.end - r.begin};
-    //   }
-    // }
-
     bool perfectMatch = false;
     bool partialMatch = false;
     size_t freeIndex;
     size_t freeSubindex;
     uint8_t subBits;
-    size_t allocSize = getSizeFor(index, subindex);
     size_t spanSize;
-    size_t fullindex;
-    uintptr_t cur;
-    uintptr_t ptr;
 
     if (bits & (1ul << index)) {
       [[likely]];
@@ -244,7 +248,6 @@ struct AllocatorImpl {
         [[likely]];
         freeIndex = index;
         freeSubindex = subindex;
-        fullindex = freeIndex * 8u + freeSubindex;
         perfectMatch = true;
         spanSize = allocSize;
       } else {
@@ -272,38 +275,52 @@ struct AllocatorImpl {
       spanSize = getSizeFor(freeIndex, freeSubindex);
       assert(spanSize > allocSize);
     }
+    if (!subBits) {
+      goto retryall;
+    }
     assert(subBits);
 
-    fullindex = freeIndex * 8u + freeSubindex;
+    size_t fullindex = freeIndex * 8u + freeSubindex;
 
     //fmt::printf("found free index %d %d for allocation of size %d  (alloc size %d span size %d)\n", freeIndex, freeSubindex, size, allocSize, spanSize);
 
     assert(spanSize >= allocSize);
 
     //fmt::printf("fullindex is %d\n", fullindex);
-    cur = spanCurrent[fullindex];
+    uintptr_t cur = spanCurrent[fullindex].load(std::memory_order_relaxed);
+    uintptr_t prev = cur;
+retrythis:
+    assert(cur != 0);
+    if ((cur & 7) != 0) {
+      goto retryall;
+    }
     assert((cur & 7) == 0);
     //assert(cur > (uintptr_t)spanBegin[fullindex] && cur < (uintptr_t)spanEnd[fullindex] - 8);
     cur -= sizeof(uintptr_t);
-    ptr = *(uintptr_t*)cur;
+    uintptr_t ptr = (*(std::atomic_uintptr_t*)cur).load(std::memory_order_relaxed);
     //fmt::printf("cur %#x, begin %#x, end %#x, ptr %#x\n", cur, (uintptr_t)spanBegin[fullindex], (uintptr_t)spanEnd[fullindex], ptr);
     assert((ptr & 14) == 0);
     assert(ptr > 0);
     if (ptr & 1) {
       [[unlikely]];
-emptylist:
       ptr &= ~(size_t)1;
-      assert(cur == (uintptr_t)spanBegin[fullindex]);
+      //assert(cur == (uintptr_t)spanBegin[fullindex]);
       cur |= 1;
       //fmt::printf("subindex %d is now empty\n", freeSubindex);
-      subBucketBits[freeIndex] &= ~((size_t)1 << freeSubindex);
-      if (subBucketBits[freeIndex] == 0) {
-        bucketBits &= ~((size_t)1 << freeIndex);
+      subBucketBits[freeIndex].fetch_and(~((size_t)1 << freeSubindex), std::memory_order_relaxed);
+      if (subBucketBits[freeIndex].load(std::memory_order_relaxed) == 0) {
+        bucketBits.fetch_and(~((size_t)1 << freeIndex), std::memory_order_relaxed);
         //fmt::printf("index %d is now empty\n", freeIndex);
       }
     }
     assert(cur >= (uintptr_t)spanBegin[fullindex]);
-    spanCurrent[fullindex] = cur;
+    assert(cur != 0);
+    // this doesnt work unless i add a generation counter
+    // that might be too much overhead, and reverting this and taking mutex might be better
+    if (!spanCurrent[fullindex].compare_exchange_strong(prev, cur, std::memory_order_relaxed)) {
+      cur = prev;
+      goto retrythis;
+    }
     if (!perfectMatch) {
       addArea<false>((void*)(ptr + allocSize), spanSize - allocSize);
     }
@@ -425,7 +442,6 @@ struct MemfdAllocatorImpl {
   }
   std::pair<void*, size_t> allocate(size_t size) {
     //return {std::malloc(size), size};
-    std::lock_guard l(allocatorMutex);
     auto r = allocator.allocate(size);
     if (r.first) {
       [[likely]];
@@ -437,7 +453,6 @@ struct MemfdAllocatorImpl {
   void deallocate(void* ptr, size_t size) {
     //return std::free(ptr);
     //fmt::printf("deallocate [%#x, %#x)\n", (uintptr_t)ptr, (uintptr_t)ptr + size);
-    std::lock_guard l(allocatorMutex);
     allocator.deallocate(ptr, size);
   }
 
