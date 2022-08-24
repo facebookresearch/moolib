@@ -109,7 +109,8 @@ struct ReadState {
   BufferHandle buffer;
   std::vector<Allocator> allocators;
   CachedReader reader;
-  ReadState(Connection* connection, Function<void(Error*, BufferHandle)> callback) : connection(connection), reader(&connection->socket), callback(std::move(callback)) {}
+  ReadState(Connection* connection, Function<void(Error*, BufferHandle)> callback)
+      : connection(connection), reader(&connection->socket), callback(std::move(callback)) {}
   template<typename Lock>
   void operator()(Error* error, Lock* lock) {
     if (error) {
@@ -176,9 +177,8 @@ struct ReadState {
             void* data = (void*)(((uintptr_t)h->data() + (uintptr_t)63) & ~(uintptr_t)63);
             Buffer* bufferPointer = h.release();
             try {
-              allocators.emplace_back(data, bufferSizes[i], rpc::kCPU, bufferPointer, [](void* ptr) {
-                BufferHandle{(Buffer*)ptr};
-              });
+              allocators.emplace_back(
+                  data, bufferSizes[i], rpc::kCPU, bufferPointer, [](void* ptr) { BufferHandle{(Buffer*)ptr}; });
             } catch (...) {
               h = BufferHandle(bufferPointer);
             }

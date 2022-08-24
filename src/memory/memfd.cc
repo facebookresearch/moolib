@@ -5,14 +5,14 @@
 #include "fmt/printf.h"
 
 #include <algorithm>
-#include <utility>
-#include <system_error>
-#include <memory>
 #include <cstddef>
 #include <cstdlib>
+#include <memory>
+#include <system_error>
+#include <utility>
 
-#include <unistd.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 #undef assert
 //#define assert(x) (bool(x) ? 0 : (printf("assert failure %s:%d\n", __FILE__, __LINE__), std::abort(), 0))
@@ -29,7 +29,7 @@ Memfd::~Memfd() {
     base = nullptr;
   }
   if (fd != -1) {
-    //fmt::printf("memfd close %d\n", fd);
+    // fmt::printf("memfd close %d\n", fd);
     close(fd);
     fd = -1;
   }
@@ -45,7 +45,7 @@ Memfd Memfd::create(size_t size) {
     throw std::system_error(errno, std::generic_category(), "ftruncate");
   }
 
-  //fmt::printf("memfd create %d\n", fd);
+  // fmt::printf("memfd create %d\n", fd);
 
   return map(fd, size);
 }
@@ -57,7 +57,7 @@ Memfd Memfd::map(int fd, size_t size) {
     throw std::system_error(errno, std::generic_category(), "mmap");
   }
 
-  //fmt::printf("memfd map %d\n", fd);
+  // fmt::printf("memfd map %d\n", fd);
 
   Memfd r;
   r.fd = fd;
@@ -174,8 +174,7 @@ struct alignas(64) AllocatorImpl {
     }
   }
 
-  [[gnu::always_inline]]
-  std::pair<void*, size_t> allocate(size_t size) {
+  [[gnu::always_inline]] std::pair<void*, size_t> allocate(size_t size) {
     size = (size + alignof(std::max_align_t) - 1) & ~(alignof(std::max_align_t) - 1);
     size_t index = findLastSetBit(size - 1);
     size_t subindex = ((size - 1) >> (index - 3)) & 7;
@@ -264,7 +263,6 @@ struct alignas(64) AllocatorImpl {
   }
 };
 
-
 struct MemfdInfo {
   Memfd memfd;
 };
@@ -277,7 +275,7 @@ struct MemfdAllocatorImpl {
   std::vector<MemfdInfo*> memfds;
   size_t allocated = 0;
   MemfdInfo* getMemfdForAddressLocked(void* ptr) {
-    auto i = std::lower_bound(memfds.begin(), memfds.end(), (uintptr_t)ptr, [](auto& a , uintptr_t b) {
+    auto i = std::lower_bound(memfds.begin(), memfds.end(), (uintptr_t)ptr, [](auto& a, uintptr_t b) {
       return (uintptr_t)a->memfd.base <= b;
     });
     if (i == memfds.begin()) {
@@ -318,21 +316,22 @@ struct MemfdAllocatorImpl {
       memsize += 1024 * 1024;
     }
     memsize = (memsize + 1024 * 1024 * 2 - 1) / (1024u * 1024 * 2) * (1024u * 1024 * 2);
-    //fmt::printf("memfd create %d (%dM) bytes\n", memsize, memsize / 1024 / 1024);
+    // fmt::printf("memfd create %d (%dM) bytes\n", memsize, memsize / 1024 / 1024);
     auto memfd = Memfd::create(memsize);
     void* base = memfd.base;
     allocator.addArea((char*)base + 64, memfd.size - 128);
     auto* ptr = &fdToMemfd[memfd.fd];
     *ptr = {};
     ptr->memfd = std::move(memfd);
-    memfds.insert(std::lower_bound(memfds.begin(), memfds.end(), (uintptr_t)base, [](auto& a, uintptr_t b) {
-      return (uintptr_t)a->memfd.base < b;
-    }), ptr);
+    memfds.insert(
+        std::lower_bound(
+            memfds.begin(), memfds.end(), (uintptr_t)base,
+            [](auto& a, uintptr_t b) { return (uintptr_t)a->memfd.base < b; }),
+        ptr);
     allocated += memsize;
-    //fmt::printf("allocated -> %dM\n", allocated / 1024 / 1024);
+    // fmt::printf("allocated -> %dM\n", allocated / 1024 / 1024);
   }
-  [[gnu::noinline]] [[gnu::cold]]
-  std::pair<void*, size_t> expandAndAllocate(size_t size) {
+  [[gnu::noinline]] [[gnu::cold]] std::pair<void*, size_t> expandAndAllocate(size_t size) {
     std::lock_guard l(expandMutex);
     expand(size);
     return allocator.allocate(size);
@@ -381,6 +380,6 @@ std::pair<void*, size_t> MemfdAllocator::getMemfd(int fd) {
   return impl->getMemfd(fd);
 }
 
-}
+} // namespace memfd
 
-}
+} // namespace rpc

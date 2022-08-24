@@ -1,9 +1,9 @@
 #pragma once
 
-#include <utility>
 #include <cstdlib>
-#include <new>
 #include <cstring>
+#include <new>
+#include <utility>
 
 namespace moolib {
 
@@ -218,4 +218,4 @@ struct Vector {
   }
 };
 
-}
+} // namespace moolib

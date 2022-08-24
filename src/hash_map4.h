@@ -1,9 +1,9 @@
 #pragma once
 
-#include <cstddef>
-#include <iterator>
-#include <cstring>
 #include <cassert>
+#include <cstddef>
+#include <cstring>
+#include <iterator>
 
 #if 0
 #define likely(x) x
@@ -35,22 +35,85 @@ void unsetBit(uint64_t* ptr, size_t index) {
   ptr[index / 64] &= ~(1ull << (index % 64));
 }
 
-#define unrollSetBits(inputvalue, code) \
-if (inputvalue) {uint64_t value__ = inputvalue; size_t index = __builtin_ctzll(value__); value__ >>= index + 1;{code}\
-if (value__) {size_t index__ = __builtin_ctzll(value__) + 1; index += index__; value__ >>= index__;{code}\
-if (value__) {size_t index__ = __builtin_ctzll(value__) + 1; index += index__; value__ >>= index__;{code}\
-if (value__) {size_t index__ = __builtin_ctzll(value__) + 1; index += index__; value__ >>= index__;{code}\
-if (value__) {size_t index__ = __builtin_ctzll(value__) + 1; index += index__; value__ >>= index__;{code}\
-if (value__) {size_t index__ = __builtin_ctzll(value__) + 1; index += index__; value__ >>= index__;{code}\
-if (value__) {size_t index__ = __builtin_ctzll(value__) + 1; index += index__; value__ >>= index__;{code}\
-if (value__) {size_t index__ = __builtin_ctzll(value__) + 1; index += index__; value__ >>= index__;{code}\
-for (int i__ = 14; i__; --i__) {\
-if (!value__) break; {size_t index__ = __builtin_ctzll(value__) + 1; index += index__; value__ >>= index__;{code}}\
-if (!value__) break; {size_t index__ = __builtin_ctzll(value__) + 1; index += index__; value__ >>= index__;{code}}\
-if (!value__) break; {size_t index__ = __builtin_ctzll(value__) + 1; index += index__; value__ >>= index__;{code}}\
-if (!value__) break; {size_t index__ = __builtin_ctzll(value__) + 1; index += index__; value__ >>= index__;{code}}\
-}\
-}}}}}}}}
+#define unrollSetBits(inputvalue, code)                                                                                \
+  if (inputvalue) {                                                                                                    \
+    uint64_t value__ = inputvalue;                                                                                     \
+    size_t index = __builtin_ctzll(value__);                                                                           \
+    value__ >>= index + 1;                                                                                             \
+    { code }                                                                                                           \
+    if (value__) {                                                                                                     \
+      size_t index__ = __builtin_ctzll(value__) + 1;                                                                   \
+      index += index__;                                                                                                \
+      value__ >>= index__;                                                                                             \
+      { code }                                                                                                         \
+      if (value__) {                                                                                                   \
+        size_t index__ = __builtin_ctzll(value__) + 1;                                                                 \
+        index += index__;                                                                                              \
+        value__ >>= index__;                                                                                           \
+        { code }                                                                                                       \
+        if (value__) {                                                                                                 \
+          size_t index__ = __builtin_ctzll(value__) + 1;                                                               \
+          index += index__;                                                                                            \
+          value__ >>= index__;                                                                                         \
+          { code }                                                                                                     \
+          if (value__) {                                                                                               \
+            size_t index__ = __builtin_ctzll(value__) + 1;                                                             \
+            index += index__;                                                                                          \
+            value__ >>= index__;                                                                                       \
+            { code }                                                                                                   \
+            if (value__) {                                                                                             \
+              size_t index__ = __builtin_ctzll(value__) + 1;                                                           \
+              index += index__;                                                                                        \
+              value__ >>= index__;                                                                                     \
+              { code }                                                                                                 \
+              if (value__) {                                                                                           \
+                size_t index__ = __builtin_ctzll(value__) + 1;                                                         \
+                index += index__;                                                                                      \
+                value__ >>= index__;                                                                                   \
+                { code }                                                                                               \
+                if (value__) {                                                                                         \
+                  size_t index__ = __builtin_ctzll(value__) + 1;                                                       \
+                  index += index__;                                                                                    \
+                  value__ >>= index__;                                                                                 \
+                  { code }                                                                                             \
+                  for (int i__ = 14; i__; --i__) {                                                                     \
+                    if (!value__) break;                                                                               \
+                    {                                                                                                  \
+                      size_t index__ = __builtin_ctzll(value__) + 1;                                                   \
+                      index += index__;                                                                                \
+                      value__ >>= index__;                                                                             \
+                      { code }                                                                                         \
+                    }                                                                                                  \
+                    if (!value__) break;                                                                               \
+                    {                                                                                                  \
+                      size_t index__ = __builtin_ctzll(value__) + 1;                                                   \
+                      index += index__;                                                                                \
+                      value__ >>= index__;                                                                             \
+                      { code }                                                                                         \
+                    }                                                                                                  \
+                    if (!value__) break;                                                                               \
+                    {                                                                                                  \
+                      size_t index__ = __builtin_ctzll(value__) + 1;                                                   \
+                      index += index__;                                                                                \
+                      value__ >>= index__;                                                                             \
+                      { code }                                                                                         \
+                    }                                                                                                  \
+                    if (!value__) break;                                                                               \
+                    {                                                                                                  \
+                      size_t index__ = __builtin_ctzll(value__) + 1;                                                   \
+                      index += index__;                                                                                \
+                      value__ >>= index__;                                                                             \
+                      { code }                                                                                         \
+                    }                                                                                                  \
+                  }                                                                                                    \
+                }                                                                                                      \
+              }                                                                                                        \
+            }                                                                                                          \
+          }                                                                                                            \
+        }                                                                                                              \
+      }                                                                                                                \
+    }                                                                                                                  \
+  }
 
 template<typename Key, typename Value, typename Hash = std::hash<Key>>
 struct HashMap {
@@ -65,6 +128,7 @@ private:
   size_t* indices2 = nullptr;
   Value* values2 = nullptr;
   size_t* sizes2 = nullptr;
+
 public:
   struct iterator {
   private:
@@ -74,6 +138,7 @@ public:
     size_t ki;
     size_t vi;
     Value* v;
+
   public:
     iterator() = default;
     iterator(HashMap* map, size_t ki, size_t vi, Value* v) : map(map), ki(ki), vi(vi), v(v) {}
@@ -197,15 +262,10 @@ public:
     }
     size_t bs = ksize;
     for (size_t i = 0; i < bs; i += 64) {
-      unrollSetBits(hasKey[i / 64],
-        return iterator(this, i + index, -1, &values[i + index]);
-      );
+      unrollSetBits(hasKey[i / 64], return iterator(this, i + index, -1, &values[i + index]););
     }
     for (size_t i = 0; i < bs; i += 64) {
-      unrollSetBits(hasKey2[i / 64],
-        i += index;
-        return iterator(this, i, i, &values2[i]);
-      );
+      unrollSetBits(hasKey2[i / 64], i += index; return iterator(this, i, i, &values2[i]););
     }
     return end();
   }
@@ -266,7 +326,7 @@ public:
       }
       ++i;
       unsetBit(hasKey, ki);
-      //printf("unset %d, hasKey[%d] is now %#x\n", ki, ki/64, hasKey[ki / 64]);
+      // printf("unset %d, hasKey[%d] is now %#x\n", ki, ki/64, hasKey[ki / 64]);
       keys[ki].~Key();
       values[ki].~Value();
       if (i != end()) {
@@ -309,7 +369,7 @@ public:
       printf("bucket count is not a multiple of 2!\n");
       std::abort();
     }
-    //printf("rehash %d %d\n", newBs, size());
+    // printf("rehash %d %d\n", newBs, size());
     uint64_t* oldHasKey = hasKey;
     uint64_t* oldHasKey2 = hasKey2;
     Key* oldKeys = keys;
@@ -337,13 +397,9 @@ public:
       size_t bs = ksize;
       ksize = newBs;
       for (size_t i = 0; i < bs; i += 64) {
-        unrollSetBits(oldHasKey[i / 64],
-          size_t ki = i + index;
-          --msize;
-          try_emplace(std::move(oldKeys[ki]), std::move(oldValues[ki]));
-          oldKeys[ki].~Key();
-          oldValues[ki].~Value();
-        );
+        unrollSetBits(oldHasKey[i / 64], size_t ki = i + index; --msize;
+                      try_emplace(std::move(oldKeys[ki]), std::move(oldValues[ki])); oldKeys[ki].~Key();
+                      oldValues[ki].~Value(););
       }
       for (size_t vi = 0; vi != bs; ++vi) {
         if (oldIndices2[vi] != -1) {
@@ -471,9 +527,8 @@ public:
   size_t size() const noexcept {
     return msize;
   }
-
 };
 
-}
+} // namespace moolib
 
 #undef unrollSetBits

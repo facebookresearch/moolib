@@ -11,12 +11,12 @@
 
 #include "memfd.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdlib>
 #include <stdlib.h>
 #include <vector>
-#include <algorithm>
 
 namespace rpc {
 
@@ -39,7 +39,6 @@ struct Storage {
     for (Header* ptr = freelist; ptr;) {
       Header* next = ptr->next;
       memfdAllocator.deallocate(ptr, ptr->capacity + sizeof(Header));
-      //std::free(ptr);
       ptr = next;
     }
   }
@@ -56,9 +55,6 @@ struct Storage {
       return allocate();
     }
     l.unlock();
-    // Header* r = (Header*)aligned_alloc(64, size);
-    // new (r) Header();
-    // r->capacity = size - sizeof(Header);
     auto a = memfdAllocator.allocate(size);
     Header* r = (Header*)a.first;
     new (r) Header();
@@ -117,9 +113,6 @@ Header* allocate(size_t n) {
   } else if (n + overhead <= 4096) {
     return allocimpl::Storage<Header, Data, 4096>::get().allocate();
   } else {
-    // Header* h = (Header*)aligned_alloc(64, (sizeof(Header) + sizeof(Data) * n + 63) / 64 * 64);
-    // new (h) Header();
-    // h->capacity = n;
     auto a = memfdAllocator.allocate((sizeof(Header) + sizeof(Data) * n + 63) / 64 * 64);
     Header* h = (Header*)a.first;
     new (h) Header();
@@ -139,11 +132,6 @@ void deallocate(Header* ptr) {
   } else if (n == 4096) {
     allocimpl::Storage<Header, Data, 4096>::get().deallocate(ptr);
   } else {
-    if (n <= 4096) {
-      printf("allocator n is %d\n", (int)n);
-      std::abort();
-    }
-    //std::free(ptr);
     memfdAllocator.deallocate(ptr, ptr->capacity + sizeof(Header));
   }
 }

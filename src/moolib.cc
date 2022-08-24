@@ -1018,8 +1018,7 @@ struct RpcWrapper {
           });
     } else {
       rpc->define<rpc::BufferHandle(rpc::BufferHandle)>(
-          name, [callback = GilWrapper<py::function>(std::move(callback))](
-                    rpc::BufferHandle buffer) mutable {
+          name, [callback = GilWrapper<py::function>(std::move(callback))](rpc::BufferHandle buffer) mutable {
             TIME(DEFINECALL);
             TIME(GIL_SCOPED_ACQUIRE);
             py::gil_scoped_acquire gil;
@@ -1030,8 +1029,8 @@ struct RpcWrapper {
             rpc::Rpc::deserializeArguments(buffer, args, kwargs);
             TIME(CALL_OTHER);
             if (_Py_IsFinalizing()) {
-              //return GilWrapper<py::object>(py::none());
-              return (rpc::BufferHandle)nullptr;
+              // return GilWrapper<py::object>(py::none());
+              return (rpc::BufferHandle) nullptr;
             }
             keepThreadAlive();
             py::object retval;
@@ -1040,21 +1039,21 @@ struct RpcWrapper {
                 ENDTIME(CALL_OTHER);
                 TIME(PyObject_Call);
                 retval = py::reinterpret_steal<py::object>(PyObject_Call(callback->ptr(), args->ptr(), kwargs->ptr()));
-                //fmt::printf("both\n");
-                //return GilWrapper<py::object>((*callback)(**std::move(*args), ***std::move(*kwargs)));
+                // fmt::printf("both\n");
+                // return GilWrapper<py::object>((*callback)(**std::move(*args), ***std::move(*kwargs)));
               } else {
                 fmt::printf("just args\n");
                 std::abort();
-                //return GilWrapper<py::object>((*callback)(**std::move(*args)));
+                // return GilWrapper<py::object>((*callback)(**std::move(*args)));
               }
             } else if (kwargs) {
               fmt::printf("kwargs\n");
               std::abort();
-              //return GilWrapper<py::object>((*callback)(***std::move(*kwargs)));
+              // return GilWrapper<py::object>((*callback)(***std::move(*kwargs)));
             } else {
               fmt::printf("no args\n");
               std::abort();
-              //return GilWrapper<py::object>((*callback)());
+              // return GilWrapper<py::object>((*callback)());
             }
             rpc::Rpc::serializeReturn(buffer, retval);
             return buffer;
@@ -1175,14 +1174,14 @@ struct RpcWrapper {
   auto async(
       std::string_view peerName, std::string_view functionName, std::optional<py::args> args,
       std::optional<py::kwargs> kwargs) {
-    //ENABLE_TIME();
+    // ENABLE_TIME();
     TIME(async);
     TIME(asyncSerialize);
     auto buffer = rpc->serializeArguments(args, kwargs);
     ENDTIME(asyncSerialize);
     TIME(asyncReleaseGil);
     TIME(asyncPreGil);
-    //py::gil_scoped_release gil;
+    // py::gil_scoped_release gil;
     ENDTIME(asyncReleaseGil);
     Promise<FutureWrapper> promise;
     auto future = promise.getFuture();
@@ -1209,7 +1208,8 @@ struct RpcWrapper {
     //   std::string str;
     //   for (size_t i = 0; i != rpc::times.size(); ++i) {
     //     if (rpc::times[i] > 0) {
-    //       str += fmt::sprintf("%s: %d (%g%%)\n", rpc::names[i], rpc::times[i], rpc::times[i] / (double)maxvalue * 100);
+    //       str += fmt::sprintf("%s: %d (%g%%)\n", rpc::names[i], rpc::times[i], rpc::times[i] / (double)maxvalue *
+    //       100);
     //     }
     //   }
     //   fmt::printf("%s", str);

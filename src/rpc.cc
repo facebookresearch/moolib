@@ -7,8 +7,8 @@
 
 #include "rpc.h"
 
-#include "intrusive_list.h"
 #include "hash_map.h"
+#include "intrusive_list.h"
 
 #include "transports/ipc.h"
 
@@ -32,7 +32,7 @@ thread_local bool callbackScheduledFromBackend = false;
 
 template<typename Key, typename Value, typename Hash = std::hash<Key>>
 using HashMap = std::unordered_map<Key, Value, Hash>;
-//using HashMap = moolib::HashMap<Key, Value, Hash>;
+// using HashMap = moolib::HashMap<Key, Value, Hash>;
 
 async::SchedulerFifo scheduler;
 
@@ -146,9 +146,12 @@ inline struct Timekeeper {
   int64_t longPath(int64_t tsc) {
     std::unique_lock l(mutex, std::try_to_lock);
     if (!l.owns_lock()) {
-      return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+      return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+          .count();
     }
-    int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    int64_t now =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count();
     prevTime = now;
     prevTimeTsc = tsc;
     const int64_t benchmarkInterval = 1000000000;
@@ -159,18 +162,18 @@ inline struct Timekeeper {
       lastBenchmarkTime = now;
       lastBenchmarkTsc = tsc;
       if (pttsc) {
-        //fmt::printf("tsc passed in %d: %d\n", now - pt, tsc - pttsc);
+        // fmt::printf("tsc passed in %d: %d\n", now - pt, tsc - pttsc);
         int64_t tscDiff = tsc - pttsc;
         int64_t timeDiff = now - pt;
         if (tscDiff > 0 && timeDiff > 0) {
           uint64_t a = tscDiff;
           uint64_t b = timeDiff;
           uint64_t x = (a << 16) / b;
-          //fmt::printf("x is %#x\n", x);
+          // fmt::printf("x is %#x\n", x);
           tscDivisor = x;
-          //tscThreshold = (a * (b >> 16)) / (resetTimeInterval >> 16);
+          // tscThreshold = (a * (b >> 16)) / (resetTimeInterval >> 16);
           tscThreshold = tscDivisor * resetTimeInterval / 65536;
-          //fmt::printf("tscThreshold is now %d\n", tscThreshold);
+          // fmt::printf("tscThreshold is now %d\n", tscThreshold);
         }
       }
     }
@@ -181,7 +184,7 @@ inline struct Timekeeper {
     int64_t tscPassed = tsc - prevTimeTsc;
     if (tscThreshold > 0 & tscPassed < tscThreshold) {
       //++count;
-      //fmt::printf("tscPassed is %d, divisor %d\n", tscPassed, tscDivisor);
+      // fmt::printf("tscPassed is %d, divisor %d\n", tscPassed, tscDivisor);
       return prevTime + (tscPassed * 65536) / tscDivisor;
     }
     return longPath(tsc);
@@ -201,7 +204,8 @@ struct FastClock {
     // auto error = now.time_since_epoch() - r.time_since_epoch();
     // thread_local int count = 0;
     // if (++count % 100 == 0) {
-    //   fmt::printf("thread %d, tsc %d, %d vs %d error is %d (%gms)\n", ::gettid(), __rdtsc(), r.time_since_epoch().count(), now.time_since_epoch().count(), error.count(), seconds(error) * 1000);
+    //   fmt::printf("thread %d, tsc %d, %d vs %d error is %d (%gms)\n", ::gettid(), __rdtsc(),
+    //   r.time_since_epoch().count(), now.time_since_epoch().count(), error.count(), seconds(error) * 1000);
     // }
     return r;
   }
@@ -404,14 +408,16 @@ struct APIWrapper : API {
 
 enum class ConnectionType { ipc, tcp, count };
 static const std::array<const char*, (int)ConnectionType::count> connectionTypeName = {
-    "IPC", "TCP",
+    "IPC",
+    "TCP",
 };
 static const std::array<const char*, (int)ConnectionType::count> connectionShortTypeName = {
-    "ipc", "tcp",
+    "ipc",
+    "tcp",
 };
 static const std::array<bool, (int)ConnectionType::count> connectionDefaultEnabled = {
-    true,  // ipc
-    true,  // tcp
+    true, // ipc
+    true, // tcp
 };
 
 template<typename API>
@@ -635,8 +641,7 @@ struct PeerImpl {
 
   std::atomic<int> findThisPeerIncrementingTimeoutMilliseconds = 0;
   std::atomic<Clock::time_point> lastFindThisPeer = Clock::time_point{};
-  static_assert(
-      std::atomic<Clock::time_point>::is_always_lock_free, "atomic time_point is not lock-free");
+  static_assert(std::atomic<Clock::time_point>::is_always_lock_free, "atomic time_point is not lock-free");
 
   Clock::time_point lastFindPeers;
 
@@ -713,9 +718,9 @@ struct PeerImpl {
 
   template<typename Buffer>
   bool banditSend(
-      uint32_t mask, Buffer buffer, TensorContext& tensorContext, Deferrer& defer,
-      Clock::time_point now, size_t* indexUsed = nullptr,
-      Me<RpcConnectionImplBase>* outConnection = nullptr, bool shouldFindPeer = true) noexcept {
+      uint32_t mask, Buffer buffer, TensorContext& tensorContext, Deferrer& defer, Clock::time_point now,
+      size_t* indexUsed = nullptr, Me<RpcConnectionImplBase>* outConnection = nullptr,
+      bool shouldFindPeer = true) noexcept {
     // log("banditSend %d bytes mask %#x\n", (int)buffer->size, mask);
     try {
       thread_local std::vector<std::pair<size_t, float>> list;
@@ -767,7 +772,8 @@ struct PeerImpl {
         });
         if (!b && buffer) {
           mask &= ~(1 << index);
-          return banditSend(mask, std::move(buffer), tensorContext, defer, now, indexUsed, outConnection, shouldFindPeer);
+          return banditSend(
+              mask, std::move(buffer), tensorContext, defer, now, indexUsed, outConnection, shouldFindPeer);
         }
         if (b && indexUsed) {
           *indexUsed = index;
@@ -807,8 +813,8 @@ struct PeerImpl {
 
   template<typename API, typename Buffer>
   bool send(
-      Clock::time_point now, Buffer& buffer, TensorContext& tensorContext,
-      Me<RpcConnectionImplBase>* outConnection, Deferrer& defer) {
+      Clock::time_point now, Buffer& buffer, TensorContext& tensorContext, Me<RpcConnectionImplBase>* outConnection,
+      Deferrer& defer) {
     TIME(sendSetup);
     auto& x = connections_[index<API>];
     std::shared_lock rl(x.mutex);
@@ -1011,11 +1017,11 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
           PeerId peerId;
           std::vector<ConnectionTypeInfo> info;
           deserializeBuffer(view, peerName, peerId, info);
-          //fmt::printf("got greeting!\n");
+          // fmt::printf("got greeting!\n");
           rpc.onGreeting(*this, peerName, peerId, std::move(info));
         } else if (signature == kSignatureResponse) {
           std::lock_guard l(earlySendQueueMutex);
-          //fmt::printf("got greeting response, queue size %d\n", earlySendQueue.size());
+          // fmt::printf("got greeting response, queue size %d\n", earlySendQueue.size());
           hasReceivedGreetingResponse = true;
           Deferrer defer;
           TensorContext nullTensorContext;
@@ -1030,7 +1036,8 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
         rpc.log("error in greeting\n");
         close();
       }
-    } else rpc.log(0, "unexpected message\n");
+    } else
+      rpc.log(0, "unexpected message\n");
   }
 
   void greet(std::string_view name, PeerId peerId, const std::vector<ConnectionTypeInfo>& info, Deferrer& defer) {
@@ -1043,7 +1050,7 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
 
   void greetingResponse(Deferrer& defer) {
     // log("%p::greet(\"%s\", %s)\n", (void*)this, name, peerId.toString().c_str());
-    //fmt::printf("sending greeting response!\n");
+    // fmt::printf("sending greeting response!\n");
     BufferHandle buffer;
     serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqGreeting, kSignatureResponse);
     TensorContext nullTensorContext;
@@ -1056,7 +1063,7 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
     if (!isGreeting && !hasReceivedGreetingResponse.load(std::memory_order_acquire)) {
       std::lock_guard l(earlySendQueueMutex);
       if (!hasReceivedGreetingResponse) {
-        //fmt::printf("pushing to early send queue!\n");
+        // fmt::printf("pushing to early send queue!\n");
         if constexpr (std::is_same_v<Buffer, SharedBufferHandle>) {
           earlySendQueue.push_back(std::move(buffer));
         } else {
@@ -1526,8 +1533,7 @@ struct Rpc::Impl {
   }
 
   template<typename T>
-  Clock::time_point
-  processTimeout(T& o, Clock::time_point now, Resend& s, Deferrer& defer) {
+  Clock::time_point processTimeout(T& o, Clock::time_point now, Resend& s, Deferrer& defer) {
     log("Process timeout for rid %#x to %s\n", o.rid, o.peer->name);
     auto newTimeout = now + std::chrono::seconds(1);
     if (s.connection) {
@@ -1541,14 +1547,16 @@ struct Rpc::Impl {
       }
       if (!s.acked && !s.hasAddedFailureLatency && now - s.lastSendTimestamp >= timeout) {
         s.hasAddedFailureLatency = true;
-        log(0, "  -- rid %#x to %s   %s failed  (ack is %d)\n", o.rid, o.peer->name, connectionTypeName.at(s.connectionIndex), s.acked);
+        log(0, "  -- rid %#x to %s   %s failed  (ack is %d)\n", o.rid, o.peer->name,
+            connectionTypeName.at(s.connectionIndex), s.acked);
         switchOnAPI(
             (ConnectionType)s.connectionIndex, [&](auto api) { addLatency<decltype(api)>(*o.peer, now, timeout, 1); });
       }
       if (now - s.connection->lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::seconds(8) && false) {
-        log(0, "Closing connection %s to %s due to timeout! (rid %#x)\n", connectionTypeName.at(s.connectionIndex), o.peer->name, o.rid);
-        //log(0, "Aborting!!\n");
-        //std::abort();
+        log(0, "Closing connection %s to %s due to timeout! (rid %#x)\n", connectionTypeName.at(s.connectionIndex),
+            o.peer->name, o.rid);
+        // log(0, "Aborting!!\n");
+        // std::abort();
         auto& x = o.peer->connections_.at(s.connectionIndex);
         std::lock_guard l(x.mutex);
         for (size_t i = 0; i != x.conns.size(); ++i) {
@@ -1815,7 +1823,7 @@ struct Rpc::Impl {
         for (auto& b : container) {
           std::unique_lock l(b.mutex);
           bool anyToRemove = false;
-          //fmt::printf("map size is %d\n", b.map.size());
+          // fmt::printf("map size is %d\n", b.map.size());
           for (auto&& [k, v] : b.map) {
             if (now - v.creationTimestamp >= absTimeoutDuration) {
               anyToRemove = true;
@@ -2124,8 +2132,9 @@ struct Rpc::Impl {
       return;
     }
 
-    scheduler.run([this, me = std::move(me), &peer, fid, buffer = std::move(buffer), tensorContext, response = std::move(response)]() mutable {
-      //ENABLE_TIME();
+    scheduler.run([this, me = std::move(me), &peer, fid, buffer = std::move(buffer), tensorContext,
+                   response = std::move(response)]() mutable {
+      // ENABLE_TIME();
       TIME(sendRequest);
       TIME(sendRequestSetup);
       auto* ptr = dataptr<std::byte>(&*buffer);
@@ -2142,7 +2151,7 @@ struct Rpc::Impl {
       ENDTIME(sendRequestClock);
       Deferrer defer;
       {
-        //log(0, "tid %d send request %#x %s::%#x\n", ::gettid(), rid, peer.name, fid);
+        // log(0, "tid %d send request %#x %s::%#x\n", ::gettid(), rid, peer.name, fid);
         SharedBufferHandle shared(buffer.release());
         auto& oBucket = getBucket(outgoing_, rid);
         TIME(BucketLock);
@@ -2156,7 +2165,7 @@ struct Rpc::Impl {
         }
         TIME(bucket_try_emplace);
         auto in = oBucket.map.try_emplace(rid);
-        //fmt::printf("bucket map has %d buckets %d size\n", oBucket.map.bucket_count(), oBucket.map.size());
+        // fmt::printf("bucket map has %d buckets %d size\n", oBucket.map.bucket_count(), oBucket.map.size());
         ENDTIME(bucket_try_emplace);
         while (!in.second) {
           TIME(bucket_try_emplace_loop);
@@ -2570,9 +2579,7 @@ struct Rpc::Impl {
   }
 
   template<typename API>
-  void addLatency(
-      PeerImpl& peer, Clock::time_point now, Clock::duration duration,
-      size_t bytes) {
+  void addLatency(PeerImpl& peer, Clock::time_point now, Clock::duration duration, size_t bytes) {
     uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
 
     float latency = std::min(us / 1000.0f / std::max(bytes / 128, (size_t)1), 10000.0f);
@@ -2647,7 +2654,8 @@ struct RpcImpl : RpcImplBase {
   }
 
   template<typename T>
-  void handlePoke(T& container, PeerImpl& peer, RpcConnectionImpl<API>& conn, uint32_t rid, Deferrer& defer, bool isInit = false) {
+  void handlePoke(
+      T& container, PeerImpl& peer, RpcConnectionImpl<API>& conn, uint32_t rid, Deferrer& defer, bool isInit = false) {
     auto& bucket = rpc.getBucket(container, rid);
     std::unique_lock l(bucket.mutex);
     auto i = bucket.map.find(rid);
@@ -2683,7 +2691,9 @@ struct RpcImpl : RpcImplBase {
   }
 
   template<bool allowNew, typename T>
-  bool handleRecv(T& container, PeerImpl& peer, RpcConnectionImpl<API>& conn, uint32_t rid, Clock::time_point now, Deferrer& defer) {
+  bool handleRecv(
+      T& container, PeerImpl& peer, RpcConnectionImpl<API>& conn, uint32_t rid, Clock::time_point now,
+      Deferrer& defer) {
     rpc.log("handleRecv peer %s rid %#x\n", peer.name, rid);
     auto find = [&](auto& bucket, auto& l) {
       auto check = [&](auto i) -> decltype(&i->second) {
@@ -2767,8 +2777,7 @@ struct RpcImpl : RpcImplBase {
   }
 
   template<bool isIncoming, typename T>
-  void
-  handleAck(T& container, PeerImpl& peer, uint32_t rid, Clock::time_point now, Deferrer& defer) {
+  void handleAck(T& container, PeerImpl& peer, uint32_t rid, Clock::time_point now, Deferrer& defer) {
     auto& bucket = rpc.getBucket(container, rid);
     std::optional<Clock::duration> duration;
     size_t bytes = 0;
@@ -2804,8 +2813,7 @@ struct RpcImpl : RpcImplBase {
   }
 
   template<typename T>
-  void
-  handleNack(T& container, PeerImpl& peer, uint32_t rid, Clock::time_point now, Deferrer& defer) {
+  void handleNack(T& container, PeerImpl& peer, uint32_t rid, Clock::time_point now, Deferrer& defer) {
     log("got nack peer %s rid %#x\n", peer.name, rid);
     auto& bucket = rpc.getBucket(container, rid);
     std::unique_lock l(bucket.mutex);
@@ -3038,8 +3046,7 @@ struct RpcImpl : RpcImplBase {
 
   void onResponse(
       PeerImpl& peer, RpcConnectionImpl<API>& conn, uint32_t rid, uint32_t fid, const std::byte* ptr, size_t len,
-      BufferHandle buffer, TensorContext& tensorContext, Clock::time_point now,
-      Deferrer& defer) noexcept {
+      BufferHandle buffer, TensorContext& tensorContext, Clock::time_point now, Deferrer& defer) noexcept {
     log("onResponse peer %s rid %#x fid %#x\n", peer.name, rid, fid);
     rid |= 1;
     switch (fid) {

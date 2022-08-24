@@ -1,9 +1,9 @@
 #pragma once
 
-#include <cstddef>
-#include <iterator>
-#include <cstring>
 #include <cassert>
+#include <cstddef>
+#include <cstring>
+#include <iterator>
 
 #if 0
 #define likely(x) x
@@ -30,6 +30,7 @@ private:
   size_t* indices2 = nullptr;
   Value* values2 = nullptr;
   size_t* sizes2 = nullptr;
+
 public:
   struct iterator {
   private:
@@ -39,6 +40,7 @@ public:
     size_t ki;
     size_t vi;
     Value* v;
+
   public:
     iterator() = default;
     iterator(HashMap* map, size_t ki, size_t vi, Value* v) : map(map), ki(ki), vi(vi), v(v) {}
@@ -260,7 +262,7 @@ public:
       printf("bucket count is not a multiple of 2!\n");
       std::abort();
     }
-    //printf("rehash %d %d\n", newBs, size());
+    // printf("rehash %d %d\n", newBs, size());
     bool* oldHasKey = hasKey;
     Key* oldKeys = keys;
     Value* oldValues = values;
@@ -424,7 +426,6 @@ public:
   size_t size() const noexcept {
     return msize;
   }
-
 };
 
-}
+} // namespace moolib

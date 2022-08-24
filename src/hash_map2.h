@@ -1,8 +1,8 @@
 #pragma once
 
 #include <cstddef>
-#include <iterator>
 #include <cstring>
+#include <iterator>
 
 //#include "fmt/printf.h"
 
@@ -115,6 +115,7 @@ private:
   Value** values2 = nullptr;
   size_t* sizes2 = nullptr;
   size_t* allocated2 = nullptr;
+
 public:
   struct iterator {
   private:
@@ -124,6 +125,7 @@ public:
     size_t ki;
     size_t vi;
     Value* v;
+
   public:
     iterator() = default;
     iterator(HashMap* map, size_t ki, size_t vi, Value* v) : map(map), ki(ki), vi(vi), v(v) {}
@@ -390,7 +392,7 @@ public:
       printf("bucket count is not a multiple of 2!\n");
       std::abort();
     }
-    //printf("rehash %d %d\n", newBs, size());
+    // printf("rehash %d %d\n", newBs, size());
     bool* oldHasKey = hasKey;
     Key* oldKeys = keys;
     Value* oldValues = values;
@@ -414,7 +416,7 @@ public:
           ++hits;
         }
       }
-      //printf("hits: %d/%d  misses: %d\n", hits, bs, bs - hits);
+      // printf("hits: %d/%d  misses: %d\n", hits, bs, bs - hits);
       ksize = bs;
     }
 
@@ -483,12 +485,12 @@ public:
       size_t s = sizes2[ki];
       for (size_t vi = 0; vi != s; ++vi) {
         if (keylist[vi] == key) {
-          //fmt::printf("map %p found key %#x\n", (void*)this, key);
+          // fmt::printf("map %p found key %#x\n", (void*)this, key);
           return iterator(this, ki, vi, &values2[ki][vi]);
         }
       }
     }
-    //fmt::printf("map %p no find key %#x\n", (void*)this, key);
+    // fmt::printf("map %p no find key %#x\n", (void*)this, key);
     return end();
   }
 
@@ -521,7 +523,7 @@ public:
         ++msize;
         new (&keys[ki]) Key(std::forward<KeyT>(key));
         new (&values[ki]) Value(std::forward<Args>(args)...);
-        //printf("constructed at %p\n", (void*)&values[ki]);
+        // printf("constructed at %p\n", (void*)&values[ki]);
         hasKey[ki] = true;
         return std::make_pair(iterator(this, ki, -1, &values[ki]), true);
       }
@@ -536,14 +538,14 @@ public:
       break;
     }
     size_t s;
-    //printf("keys2 is %p\n", (void*)keys2);
+    // printf("keys2 is %p\n", (void*)keys2);
     Key* ok = keys2[ki];
-    //printf("ok is %p\n", (void*)ok);
+    // printf("ok is %p\n", (void*)ok);
     Value* ov = values2[ki];
     if (!ok) {
       ok = allocate<Key>(1);
       ov = allocate<Value>(1);
-      //printf("allocate for %d\n", ki);
+      // printf("allocate for %d\n", ki);
       keys2[ki] = ok;
       values2[ki] = ov;
       sizes2[ki] = 0;
@@ -577,10 +579,10 @@ public:
       }
     }
     ++msize;
-    //fmt::printf("ctor?\n");
+    // fmt::printf("ctor?\n");
     new (&ok[s]) Key(std::forward<KeyT>(key));
     new (&ov[s]) Value(std::forward<Args>(args)...);
-    //fmt::printf("ctor done!\n");
+    // fmt::printf("ctor done!\n");
     sizes2[ki] = s + 1;
     return std::make_pair(iterator(this, ki, s, &ov[s]), true);
   }
@@ -591,9 +593,8 @@ public:
   size_t size() const noexcept {
     return msize;
   }
-
 };
 
 #endif
 
-}
+} // namespace moolib

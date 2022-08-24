@@ -1,10 +1,10 @@
 #pragma once
 
-#include <cstddef>
-#include <iterator>
-#include <cstring>
-#include <cassert>
 #include <array>
+#include <cassert>
+#include <cstddef>
+#include <cstring>
+#include <iterator>
 #include <tuple>
 #include <vector>
 
@@ -50,6 +50,7 @@ public:
   size_t ksize = 0;
   size_t msize = 0;
   Group* groups = nullptr;
+
 public:
   struct iterator {
   private:
@@ -59,6 +60,7 @@ public:
     size_t gi;
     uint8_t vi;
     mutable std::aligned_storage_t<sizeof(std::pair<Key&, Value&>), alignof(std::pair<Key&, Value&>)> tmp;
+
   public:
     iterator() = default;
     iterator(const HashMap* map, size_t gi, uint8_t vi) : map(const_cast<HashMap*>(map)), gi(gi), vi(vi) {}
@@ -86,7 +88,7 @@ public:
       assert(gi < map->ksize);
       assert(vi < Group::nItems);
       Item& i = map->indexGroup(map->groups, gi)->arr[vi];
-      new (&tmp)std::pair<Key&, Value&>(i.key, i.value);
+      new (&tmp) std::pair<Key&, Value&>(i.key, i.value);
       return (std::pair<Key&, Value&>&)tmp;
     }
     std::pair<Key&, Value&>* operator->() const noexcept {
@@ -106,9 +108,10 @@ public:
         } else {
           ++vi;
         }
-        //printf("operator++, gi %d vi %d, ext %#x  (%#x)\n", gi, vi, map->indexGroup(map->groups, gi)->ext, ((map->indexGroup(map->groups, gi)->ext >> (4u * vi)) & 0xf));
+        // printf("operator++, gi %d vi %d, ext %#x  (%#x)\n", gi, vi, map->indexGroup(map->groups, gi)->ext,
+        // ((map->indexGroup(map->groups, gi)->ext >> (4u * vi)) & 0xf));
       } while (((map->indexGroup(map->groups, gi)->ext >> (4u * vi)) & 0xf) == 0);
-      //printf("return!\n");
+      // printf("return!\n");
       assert(gi < map->ksize);
       assert(vi < Group::nItems);
       return *this;
@@ -169,7 +172,7 @@ public:
     auto* e = indexGroup(groups, bs);
     for (auto* i = groups; i != e; i = nextGroup(i)) {
       auto distances = i->ext & 0xfffffff;
-      //printf("begin checking group %d with distances %#x\n", groupIndex(groups, i), distances);
+      // printf("begin checking group %d with distances %#x\n", groupIndex(groups, i), distances);
       if (distances) {
         size_t index = __builtin_ctzll(distances) / 4u;
         return iterator(this, groupIndex(groups, i), index);
@@ -260,7 +263,7 @@ public:
     Group* groups = this->groups;
     Group* group = indexGroup(groups, i.gi);
 
-    //printf("erase %d %d, size is now %d\n", i.gi, i.vi, msize);
+    // printf("erase %d %d, size is now %d\n", i.gi, i.vi, msize);
 
     group->ext &= ~(0xf << (4 * i.vi));
 
@@ -302,10 +305,10 @@ public:
       printf("bucket count is not a multiple of 2!\n");
       std::abort();
     }
-    //printf("rehash %d %d\n", newBs, size());
+    // printf("rehash %d %d\n", newBs, size());
 
     Group* oldGroups = groups;
-    
+
     groups = (Group*)allocate<char>(groupSize * newBs);
 
     size_t bs = ksize;
@@ -324,7 +327,7 @@ public:
       size_t n = 0;
       for (auto* i = oldGroups; i != end; i = nextGroup(i)) {
         uint32_t distances = i->ext & 0xfffffff;
-        //printf("rehashing group %d with distances %#x\n", groupIndex(oldGroups, i), distances);
+        // printf("rehashing group %d with distances %#x\n", groupIndex(oldGroups, i), distances);
         while (distances) {
           uint8_t index = __builtin_ctzll(distances);
           index /= 4u;
@@ -344,63 +347,143 @@ public:
     deallocate(oldGroups);
   }
 
-#define forEachSet(distances, code) {\
-auto s0 = distances & 0xf; \
-auto s1 = distances & 0xf0; \
-auto s2 = distances & 0xf00; \
-auto s3 = distances & 0xf000; \
-auto s4 = distances & 0xf0000; \
-auto s5 = distances & 0xf00000; \
-auto s6 = distances & 0xf000000; \
-if (s0) {uint8_t index = 0; code}\
-if (Group::nItems >= 2 && s1) {uint8_t index = 1; code}\
-if (Group::nItems >= 3 && s2) {uint8_t index = 2; code}\
-if (Group::nItems >= 4 && s3) {uint8_t index = 3; code}\
-if (Group::nItems >= 5 && s4) {uint8_t index = 4; code}\
-if (Group::nItems >= 6 && s5) {uint8_t index = 5; code}\
-if (Group::nItems >= 7 && s6) {uint8_t index = 6; code}\
-}
+#define forEachSet(distances, code)                                                                                    \
+  {                                                                                                                    \
+    auto s0 = distances & 0xf;                                                                                         \
+    auto s1 = distances & 0xf0;                                                                                        \
+    auto s2 = distances & 0xf00;                                                                                       \
+    auto s3 = distances & 0xf000;                                                                                      \
+    auto s4 = distances & 0xf0000;                                                                                     \
+    auto s5 = distances & 0xf00000;                                                                                    \
+    auto s6 = distances & 0xf000000;                                                                                   \
+    if (s0) {                                                                                                          \
+      uint8_t index = 0;                                                                                               \
+      code                                                                                                             \
+    }                                                                                                                  \
+    if (Group::nItems >= 2 && s1) {                                                                                    \
+      uint8_t index = 1;                                                                                               \
+      code                                                                                                             \
+    }                                                                                                                  \
+    if (Group::nItems >= 3 && s2) {                                                                                    \
+      uint8_t index = 2;                                                                                               \
+      code                                                                                                             \
+    }                                                                                                                  \
+    if (Group::nItems >= 4 && s3) {                                                                                    \
+      uint8_t index = 3;                                                                                               \
+      code                                                                                                             \
+    }                                                                                                                  \
+    if (Group::nItems >= 5 && s4) {                                                                                    \
+      uint8_t index = 4;                                                                                               \
+      code                                                                                                             \
+    }                                                                                                                  \
+    if (Group::nItems >= 6 && s5) {                                                                                    \
+      uint8_t index = 5;                                                                                               \
+      code                                                                                                             \
+    }                                                                                                                  \
+    if (Group::nItems >= 7 && s6) {                                                                                    \
+      uint8_t index = 6;                                                                                               \
+      code                                                                                                             \
+    }                                                                                                                  \
+  }
 
-#define forEachSet_(distances, code) {\
-if (distances) {uint32_t value__ = distances; uint8_t index = __builtin_ctz(distances); index = index / 4u; value__ >>= 4u * (index + 1); {code} \
-if (Group::nItems >= 2 && value__) {size_t index__ = __builtin_ctzll(value__) / 4u + 1; index += index__; value__ >>= 4u * index__;{code}\
-if (Group::nItems >= 3 && value__) {size_t index__ = __builtin_ctzll(value__) / 4u + 1; index += index__; value__ >>= 4u * index__;{code}\
-if (Group::nItems >= 4 && value__) {size_t index__ = __builtin_ctzll(value__) / 4u + 1; index += index__; value__ >>= 4u * index__;{code}\
-if (Group::nItems >= 5 && value__) {size_t index__ = __builtin_ctzll(value__) / 4u + 1; index += index__; value__ >>= 4u * index__;{code}\
-if (Group::nItems >= 6 && value__) {size_t index__ = __builtin_ctzll(value__) / 4u + 1; index += index__; value__ >>= 4u * index__;{code}\
-if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 4u + 1; index += index__; value__ >>= 4u * index__;{code}\
-}}}}}}}}
+#define forEachSet_(distances, code)                                                                                   \
+  {                                                                                                                    \
+    if (distances) {                                                                                                   \
+      uint32_t value__ = distances;                                                                                    \
+      uint8_t index = __builtin_ctz(distances);                                                                        \
+      index = index / 4u;                                                                                              \
+      value__ >>= 4u * (index + 1);                                                                                    \
+      { code }                                                                                                         \
+      if (Group::nItems >= 2 && value__) {                                                                             \
+        size_t index__ = __builtin_ctzll(value__) / 4u + 1;                                                            \
+        index += index__;                                                                                              \
+        value__ >>= 4u * index__;                                                                                      \
+        { code }                                                                                                       \
+        if (Group::nItems >= 3 && value__) {                                                                           \
+          size_t index__ = __builtin_ctzll(value__) / 4u + 1;                                                          \
+          index += index__;                                                                                            \
+          value__ >>= 4u * index__;                                                                                    \
+          { code }                                                                                                     \
+          if (Group::nItems >= 4 && value__) {                                                                         \
+            size_t index__ = __builtin_ctzll(value__) / 4u + 1;                                                        \
+            index += index__;                                                                                          \
+            value__ >>= 4u * index__;                                                                                  \
+            { code }                                                                                                   \
+            if (Group::nItems >= 5 && value__) {                                                                       \
+              size_t index__ = __builtin_ctzll(value__) / 4u + 1;                                                      \
+              index += index__;                                                                                        \
+              value__ >>= 4u * index__;                                                                                \
+              { code }                                                                                                 \
+              if (Group::nItems >= 6 && value__) {                                                                     \
+                size_t index__ = __builtin_ctzll(value__) / 4u + 1;                                                    \
+                index += index__;                                                                                      \
+                value__ >>= 4u * index__;                                                                              \
+                { code }                                                                                               \
+                if (Group::nItems >= 7 && value__) {                                                                   \
+                  size_t index__ = __builtin_ctzll(value__) / 4u + 1;                                                  \
+                  index += index__;                                                                                    \
+                  value__ >>= 4u * index__;                                                                            \
+                  { code }                                                                                             \
+                }                                                                                                      \
+              }                                                                                                        \
+            }                                                                                                          \
+          }                                                                                                            \
+        }                                                                                                              \
+      }                                                                                                                \
+    }                                                                                                                  \
+  }
 
-
-#define forEachMatch(distances, key, code) {\
-  auto k0 = group->arr[0].key == key; \
-  auto k1 = Group::nItems >= 2 && group->arr[1].key == key; \
-  auto k2 = Group::nItems >= 3 && group->arr[2].key == key; \
-  auto k3 = Group::nItems >= 4 && group->arr[3].key == key; \
-  auto k4 = Group::nItems >= 5 && group->arr[4].key == key; \
-  auto k5 = Group::nItems >= 6 && group->arr[5].key == key; \
-  auto k6 = Group::nItems >= 7 && group->arr[6].key == key; \
-  auto s0 = bool(distances & 0xf) && k0; \
-  auto s1 = Group::nItems >= 2 && (bool(distances & 0xf0) && k1); \
-  auto s2 = Group::nItems >= 3 && (bool(distances & 0xf00) && k2); \
-  auto s3 = Group::nItems >= 4 && (bool(distances & 0xf000) && k3); \
-  auto s4 = Group::nItems >= 5 && (bool(distances & 0xf0000) && k4); \
-  auto s5 = Group::nItems >= 6 && (bool(distances & 0xf00000) && k5); \
-  auto s6 = Group::nItems >= 7 && (bool(distances & 0xf000000) && k6); \
-  if (k0 | k1 | k2 | k3 | k4 | k5 | k6) {\
-    if (s0) {uint8_t index = 0; code}\
-    if (s1) {uint8_t index = 1; code}\
-    if (s2) {uint8_t index = 2; code}\
-    if (s3) {uint8_t index = 3; code}\
-    if (s4) {uint8_t index = 4; code}\
-    if (s5) {uint8_t index = 5; code}\
-    if (s6) {uint8_t index = 6; code}\
-  }\
-}
+#define forEachMatch(distances, key, code)                                                                             \
+  {                                                                                                                    \
+    auto k0 = group->arr[0].key == key;                                                                                \
+    auto k1 = Group::nItems >= 2 && group->arr[1].key == key;                                                          \
+    auto k2 = Group::nItems >= 3 && group->arr[2].key == key;                                                          \
+    auto k3 = Group::nItems >= 4 && group->arr[3].key == key;                                                          \
+    auto k4 = Group::nItems >= 5 && group->arr[4].key == key;                                                          \
+    auto k5 = Group::nItems >= 6 && group->arr[5].key == key;                                                          \
+    auto k6 = Group::nItems >= 7 && group->arr[6].key == key;                                                          \
+    auto s0 = bool(distances & 0xf) && k0;                                                                             \
+    auto s1 = Group::nItems >= 2 && (bool(distances & 0xf0) && k1);                                                    \
+    auto s2 = Group::nItems >= 3 && (bool(distances & 0xf00) && k2);                                                   \
+    auto s3 = Group::nItems >= 4 && (bool(distances & 0xf000) && k3);                                                  \
+    auto s4 = Group::nItems >= 5 && (bool(distances & 0xf0000) && k4);                                                 \
+    auto s5 = Group::nItems >= 6 && (bool(distances & 0xf00000) && k5);                                                \
+    auto s6 = Group::nItems >= 7 && (bool(distances & 0xf000000) && k6);                                               \
+    if (k0 | k1 | k2 | k3 | k4 | k5 | k6) {                                                                            \
+      if (s0) {                                                                                                        \
+        uint8_t index = 0;                                                                                             \
+        code                                                                                                           \
+      }                                                                                                                \
+      if (s1) {                                                                                                        \
+        uint8_t index = 1;                                                                                             \
+        code                                                                                                           \
+      }                                                                                                                \
+      if (s2) {                                                                                                        \
+        uint8_t index = 2;                                                                                             \
+        code                                                                                                           \
+      }                                                                                                                \
+      if (s3) {                                                                                                        \
+        uint8_t index = 3;                                                                                             \
+        code                                                                                                           \
+      }                                                                                                                \
+      if (s4) {                                                                                                        \
+        uint8_t index = 4;                                                                                             \
+        code                                                                                                           \
+      }                                                                                                                \
+      if (s5) {                                                                                                        \
+        uint8_t index = 5;                                                                                             \
+        code                                                                                                           \
+      }                                                                                                                \
+      if (s6) {                                                                                                        \
+        uint8_t index = 6;                                                                                             \
+        code                                                                                                           \
+      }                                                                                                                \
+    }                                                                                                                  \
+  }
 
   template<typename KeyT, size_t findFirstFreeSlot = false>
-  [[gnu::always_inline]] [[gnu::hot]]
-  std::conditional_t<findFirstFreeSlot, std::pair<iterator, iterator>, iterator> find(KeyT&& key) const noexcept {
+  [[gnu::always_inline]] [[gnu::hot]] std::conditional_t<findFirstFreeSlot, std::pair<iterator, iterator>, iterator>
+  find(KeyT&& key) const noexcept {
     if (unlikely(!groups)) {
       if constexpr (findFirstFreeSlot) {
         return std::make_pair(end(), end());
@@ -413,37 +496,32 @@ if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 
     size_t gi = Hash()(key) & mask;
     size_t originalGi = gi;
 
-    //printf("find key %d at gi %d\n", key, gi);
+    // printf("find key %d at gi %d\n", key, gi);
 
     Group* groups = this->groups;
-    
+
     Group* group = indexGroup(groups, gi);
     uint8_t maxDistance = group->ext >> 28;
     uint32_t distances = group->ext & 0xfffffff;
 
-    //printf("maxDistance is %d\n", maxDistance);
+    // printf("maxDistance is %d\n", maxDistance);
 
     size_t ei = (gi + maxDistance) & mask;
     iterator free(nullptr, none, none);
     while (true) {
       uint8_t set = 0;
       if constexpr (true || findFirstFreeSlot) {
-        forEachSet(distances,
-          if constexpr (findFirstFreeSlot) {
-            set |= (uint8_t)1 << index;
-          }
-          if (group->arr[index].key == key) {
-            if constexpr (findFirstFreeSlot) {
-              return std::make_pair(iterator(this, gi, index), free);
-            } else {
-              return iterator(this, gi, index);
-            }
-          }
-        );
+        forEachSet(
+            distances,
+            if constexpr (findFirstFreeSlot) { set |= (uint8_t)1 << index; } if (group->arr[index].key == key) {
+              if constexpr (findFirstFreeSlot) {
+                return std::make_pair(iterator(this, gi, index), free);
+              } else {
+                return iterator(this, gi, index);
+              }
+            });
       } else {
-        forEachMatch(distances, key,
-          return iterator(this, gi, index);
-        );
+        forEachMatch(distances, key, return iterator(this, gi, index););
       }
 
       if constexpr (findFirstFreeSlot) {
@@ -454,7 +532,7 @@ if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 
         }
       }
 
-      //printf("not found in %d\n", gi);
+      // printf("not found in %d\n", gi);
       if (gi == ei) {
         break;
       }
@@ -465,15 +543,13 @@ if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 
     if constexpr (findFirstFreeSlot) {
       iterator i(this, originalGi, none);
       if (!free.map) {
-        //printf("find further free!\n");
+        // printf("find further free!\n");
         gi = (gi + 1) & mask;
         group = indexGroup(groups, gi);
         distances = group->ext & 0xfffffff;
         while (true) {
           uint8_t set = 0;
-          forEachSet(distances,
-            set |= (uint8_t)1 << index;
-          );
+          forEachSet(distances, set |= (uint8_t)1 << index;);
 
           set ^= ((uint8_t)1 << Group::nItems) - 1;
           if (set) {
@@ -481,7 +557,7 @@ if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 
             free = iterator(this, gi, index);
             return std::make_pair(i, free);
           }
-          //printf("try gi %d   (%d %d %d)\n", gi, ksize, msize, std::distance(begin(), end()));
+          // printf("try gi %d   (%d %d %d)\n", gi, ksize, msize, std::distance(begin(), end()));
           // size_t prevIndex = -1;
           // if constexpr (findFirstFreeSlot) {
           //   if (!free.map) {
@@ -531,15 +607,15 @@ if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 
     size_t gi = Hash()(key) & mask;
     size_t originalGi = gi;
 
-    //printf("find key %d at gi %d\n", key, gi);
+    // printf("find key %d at gi %d\n", key, gi);
 
     Group* groups = this->groups;
-    
+
     Group* group = indexGroup(groups, gi);
     uint8_t maxDistance = group->ext >> 28;
     uint32_t distances = group->ext & 0xfffffff;
 
-    //printf("maxDistance is %d\n", maxDistance);
+    // printf("maxDistance is %d\n", maxDistance);
 
     size_t ei = (gi + maxDistance) & mask;
     iterator free(nullptr, none, none);
@@ -548,7 +624,7 @@ if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 
       if constexpr (findFirstFreeSlot) {
         if (!free.map) {
           if (distances == 0) {
-            //printf("find free at 0 cuz 0 distanes!\n");
+            // printf("find free at 0 cuz 0 distanes!\n");
             free = iterator(this, gi, 0);
           }
         }
@@ -560,7 +636,7 @@ if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 
         if constexpr (findFirstFreeSlot) {
           if (!free.map) {
             if (index != prevIndex + 1) {
-              //printf("find free at %d cuz distance %d\n", prevIndex + 1, index - prevIndex);
+              // printf("find free at %d cuz distance %d\n", prevIndex + 1, index - prevIndex);
               free = iterator(this, gi, prevIndex + 1);
             }
             prevIndex = index;
@@ -582,7 +658,7 @@ if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 
           }
         }
       }
-      //printf("not found in %d\n", gi);
+      // printf("not found in %d\n", gi);
       if (gi == ei) {
         break;
       }
@@ -593,12 +669,12 @@ if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 
     if constexpr (findFirstFreeSlot) {
       iterator i(this, originalGi, none);
       if (!free.map) {
-        //printf("find further free!\n");
+        // printf("find further free!\n");
         gi = (gi + 1) & mask;
         group = indexGroup(groups, gi);
         distances = group->ext & 0xfffffff;
         while (true) {
-          //printf("try gi %d   (%d %d %d)\n", gi, ksize, msize, std::distance(begin(), end()));
+          // printf("try gi %d   (%d %d %d)\n", gi, ksize, msize, std::distance(begin(), end()));
           size_t prevIndex = -1;
           if constexpr (findFirstFreeSlot) {
             if (!free.map) {
@@ -612,7 +688,7 @@ if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 
             uint8_t index = __builtin_ctzll(distances);
             index /= 4u;
             distances &= ~(0xfu << (4u * index));
-            //printf("found something at %d\n", index);
+            // printf("found something at %d\n", index);
             if (index != prevIndex + 1) {
               free = iterator(this, gi, prevIndex + 1);
               return std::make_pair(i, free);
@@ -677,14 +753,14 @@ if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 
     Group* group = indexGroup(groups, free.gi);
     assert((group->ext & (0xfu << (4u * free.vi))) == 0);
     size_t distance = (free.gi - gi) & (ksize - 1);
-    //printf("insert new key %d at %d %d, distance %d\n", key, free.gi, free.vi, distance);
+    // printf("insert new key %d at %d %d, distance %d\n", key, free.gi, free.vi, distance);
     while (distance > 7) {
       // for (size_t ii = 0; ii != ksize; ++ii) {
       //   Group* group = indexGroup(groups, ii);
       //   printf("group %d  distances %#x  (max distance %d)\n", ii, group->ext & 0xfffffff, group->ext >> 28);
       // }
-      //printf("rehashing due to distance > 15 :(\n");
-      //std::abort();
+      // printf("rehashing due to distance > 15 :(\n");
+      // std::abort();
       size_t omsize = msize;
       reserve(ksize + 1);
       std::tie(i, free) = findFree(key);
@@ -711,7 +787,7 @@ if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 
     ++msize;
     assert(((group->ext >> (4u * free.vi)) & 0xf) == 0);
     group->ext |= (uint8_t)(distance + 1) << (4u * free.vi);
-    //printf("group->ext is now %#x\n", group->ext);
+    // printf("group->ext is now %#x\n", group->ext);
     if (distance != 0) {
       Group* ogroup = indexGroup(groups, i.gi);
       uint8_t maxDistance = ogroup->ext >> 28u;
@@ -740,9 +816,8 @@ if (Group::nItems >= 7 && value__) {size_t index__ = __builtin_ctzll(value__) / 
   size_t size() const noexcept {
     return msize;
   }
-
 };
 
-}
+} // namespace moolib
 
 #undef unrollSetBits

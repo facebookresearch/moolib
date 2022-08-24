@@ -7,10 +7,10 @@
 
 #pragma once
 
-#include "memory/allocator.h"
 #include "async.h"
-#include "memory/buffer.h"
 #include "function.h"
+#include "memory/allocator.h"
+#include "memory/buffer.h"
 #include "serialization.h"
 #include "synchronization.h"
 
@@ -266,8 +266,9 @@ struct Rpc {
             std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, std::optional<CUDAStream>, Args...>;
         constexpr bool isDeferred =
             std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, Args...> ||
-            std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, std::optional<CUDAStream>, Args...>; 
-        constexpr bool takesBuffer = sizeof...(Args) == 1 && std::is_same_v<std::decay_t<decltype(std::get<0>(args))>, BufferHandle>;
+            std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, std::optional<CUDAStream>, Args...>;
+        constexpr bool takesBuffer =
+            sizeof...(Args) == 1 && std::is_same_v<std::decay_t<decltype(std::get<0>(args))>, BufferHandle>;
         auto in = [&]() {
           TIME(FImplCallin);
           uint32_t rid, fid;

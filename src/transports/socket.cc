@@ -12,7 +12,6 @@
 
 #include "fmt/printf.h"
 
-#include <type_traits>
 #include <limits.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -22,6 +21,7 @@
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <sys/un.h>
+#include <type_traits>
 #include <unistd.h>
 
 namespace rpc {
@@ -131,8 +131,6 @@ static std::pair<std::string_view, int> decodeIpAddress(std::string_view address
   return {hostname, port};
 }
 
-
-
 uint32_t writeFdFlag = 0x413ffc3f;
 
 thread_local SocketImpl* inReadLoop = nullptr;
@@ -209,7 +207,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       if (::listen(fd, 50) == -1) {
         throw std::system_error(errno, std::generic_category(), "listen:");
       }
-      //fmt::printf("listening on %s\n", path);
     } else if (af == AF_INET) {
       wl.unlock();
       int port = 0;
@@ -314,7 +311,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     if (closed.load(std::memory_order_relaxed)) {
       return;
     }
-    //fmt::printf("connect AF %d address %s\n", af, address);
     if (af == AF_UNIX) {
       sockaddr_un sa;
       memset(&sa, 0, sizeof(sa));
@@ -324,11 +320,9 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       size_t len = std::min(path.size(), sizeof(sa.sun_path) - 2);
       std::memcpy(&sa.sun_path[1], path.data(), len);
       if (::connect(fd, (const sockaddr*)&sa, sizeof(sa)) && errno != EAGAIN) {
-        //fmt::printf("connect to %s failed\n", path);
         Error e(std::strerror(errno));
         std::move(callback)(&e);
       } else {
-        //fmt::printf("connected to %s\n", path);
         std::move(callback)(nullptr);
         std::unique_lock ql(writeQueueMutex);
         writeLoop(wl, ql);

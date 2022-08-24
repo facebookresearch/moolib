@@ -1,9 +1,9 @@
 #pragma once
 
-#include <cstddef>
-#include <iterator>
-#include <cstring>
 #include <cassert>
+#include <cstddef>
+#include <cstring>
+#include <iterator>
 
 #if 0
 #define likely(x) x
@@ -42,6 +42,7 @@ private:
   size_t msize = 0;
   PrimaryItem* primary = nullptr;
   SecondaryItem* secondary = nullptr;
+
 public:
   struct iterator {
   private:
@@ -52,9 +53,11 @@ public:
     size_t vi;
     Value* v;
     mutable std::aligned_storage_t<sizeof(std::pair<Key&, Value&>), alignof(std::pair<Key&, Value&>)> tmp;
+
   public:
     iterator() = default;
-    iterator(const HashMap* map, size_t ki, size_t vi, Value* v) : map(const_cast<HashMap*>(map)), ki(ki), vi(vi), v(v) {}
+    iterator(const HashMap* map, size_t ki, size_t vi, Value* v)
+        : map(const_cast<HashMap*>(map)), ki(ki), vi(vi), v(v) {}
     iterator(const iterator& n) {
       map = n.map;
       ki = n.ki;
@@ -262,10 +265,10 @@ public:
       printf("bucket count is not a multiple of 2!\n");
       std::abort();
     }
-    //printf("rehash %d %d\n", newBs, size());
+    // printf("rehash %d %d\n", newBs, size());
     PrimaryItem* oldPrimary = primary;
     SecondaryItem* oldSecondary = secondary;
-    
+
     primary = allocate<PrimaryItem>(newBs);
     secondary = allocate<SecondaryItem>(newBs);
 
@@ -442,7 +445,7 @@ public:
     }
     size_t newksize = msize + 1;
     if (unlikely(ksize < newksize)) {
-resize:
+    resize:
       size_t omsize = msize;
       reserve(newksize);
       i = find(key);
@@ -457,10 +460,10 @@ resize:
       pv.size = 0;
       new (&pv.key) Key(std::forward<KeyT>(key));
       new (&pv.value) Value(std::forward<Args>(args)...);
-      //printf("construct new primary value at %p\n", (void*)&pv.value);
+      // printf("construct new primary value at %p\n", (void*)&pv.value);
       return std::make_pair(iterator(this, i.ki, none, &pv.value), true);
     } else if (ksize < 1024 * 1024 / sizeof(PrimaryItem) && ksize < msize * 4) {
-expand:
+    expand:
       newksize = ksize + 1;
       goto resize;
     } else {
@@ -480,7 +483,7 @@ expand:
       sv.index = i.ki;
       new (&sv.key) Key(std::forward<KeyT>(key));
       new (&sv.value) Value(std::forward<Args>(args)...);
-      //printf("construct new secondary value at %p\n", (void*)&sv.value);
+      // printf("construct new secondary value at %p\n", (void*)&sv.value);
       return std::make_pair(iterator(this, i.ki, index, &sv.value), true);
     }
   }
@@ -496,9 +499,8 @@ expand:
   size_t size() const noexcept {
     return msize;
   }
-
 };
 
-}
+} // namespace moolib
 
 #undef unrollSetBits

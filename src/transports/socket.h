@@ -69,13 +69,11 @@ struct CachedReader {
   CachedReader(Socket* socket) : socket(socket) {}
   void newRead() {
     iovecs.clear();
-    //fmt::printf("new read\n");
   }
   void addIovec(const iovec& v) {
     iovecs.push_back(v);
   }
   void addIovec(void* dst, size_t len) {
-    //fmt::printf("add iovec %p %d\n", dst, len);
     iovecs.push_back(iovec{dst, len});
   }
   void startRead() {

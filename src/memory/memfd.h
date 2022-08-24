@@ -1,10 +1,10 @@
 #pragma once
 
-#include <cstdlib>
-#include <utility>
-#include <memory>
-#include <atomic>
 #include <array>
+#include <atomic>
+#include <cstdlib>
+#include <memory>
+#include <utility>
 
 namespace rpc {
 namespace memfd {
@@ -51,6 +51,6 @@ struct MemfdAllocator {
   void deallocate(void* ptr, size_t size);
 };
 
-}
+} // namespace memfd
 
-}
+} // namespace rpc

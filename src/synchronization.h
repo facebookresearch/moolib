@@ -110,6 +110,7 @@ using SharedSpinMutex = std::shared_mutex;
 class SharedSpinMutex {
   std::atomic_bool locked = false;
   std::atomic_int shareCount = 0;
+
 public:
   void lock() {
     do {
