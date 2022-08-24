@@ -18,6 +18,18 @@ namespace h5 {
 
 #include "../tmp/hash-table-shootout/flat_hash_map/flat_hash_map.hpp"
 
+#include "src/memory/memfd.h"
+
+#include "src/memory/buffer.h"
+
+extern "C" {
+#include "src/memory/rpmalloc.h"
+}
+
+#include "../mimalloc/include/mimalloc.h"
+
+#include "fmt/printf.h"
+
 #include <string>
 #include <unordered_map>
 #include <chrono>
@@ -26,6 +38,7 @@ namespace h5 {
 #include <atomic>
 #include <mutex>
 #include <random>
+#include <thread>
 
 #include <x86intrin.h>
 
@@ -92,11 +105,11 @@ inline struct Timekeeper {
   }
 } timekeeper;
 
-struct Clock {
+struct Clockz {
   using duration = std::chrono::nanoseconds;
   using rep = duration::rep;
   using period = duration::period;
-  using time_point = std::chrono::time_point<Clock, duration>;
+  using time_point = std::chrono::time_point<Clockz, duration>;
   static constexpr bool is_steady = true;
 
   static time_point now() noexcept {
@@ -110,6 +123,8 @@ struct Clock {
     return r;
   }
 };
+
+using Clock = std::chrono::steady_clock;
 
 //#define time(name, x) start = __rdtsc(); std::atomic_thread_fence(std::memory_order_seq_cst); x; std::atomic_thread_fence(std::memory_order_seq_cst); end = __rdtsc(); names[__LINE__] = #name; times[__LINE__] += end - start; counts[__LINE__] += 1;
 //#define time(name, x) start = __rdtsc(); x; end = __rdtsc(); names[__LINE__] = #name; times[__LINE__] += end - start; counts[__LINE__] += 1;
@@ -138,7 +153,117 @@ int main() {
 
   uint64_t recon = 0;
 
-  std::minstd_rand rng(42);
+  rpc::memfd::MemfdAllocator memfdAllocator;
+
+  {
+    rpmalloc_initialize();
+
+    auto allocate = [&](auto& v) {
+      //v.first = mi_malloc(v.second);
+      //v.first = std::malloc(v.second);
+      v = memfdAllocator.allocate(v.second);
+      //v.first = rpmalloc(v.second);
+      // auto h = rpc::makeBuffer(v.second, 0);
+      // v.first = h->data();
+      // v.second = (uintptr_t)h.release();
+    };
+    auto deallocate = [&](auto& v) {
+      //mi_free(v.first);
+      //rpc::BufferHandle{(rpc::Buffer*)v.second};
+      //std::free(v.first);
+      memfdAllocator.deallocate(v.first, v.second);
+      //rpfree(v.first);
+    };
+
+    //std::unordered_map<uintptr_t, size_t> map;
+
+    auto func = [&](size_t index) {
+      rpmalloc_thread_initialize();
+      std::minstd_rand rng(42 + 420 * index);
+      std::vector<std::pair<void*, size_t>> allocations;
+      allocations.resize(200);
+
+      for (int x = 0; x != 8; ++x) {
+        for (int j = 0; j != 2; ++j) {
+
+          auto start = Clock::now();
+          int alloccount = 0;
+          int freecount = 0;
+
+          for (int i = 0; i != 400000; ++i) {
+            size_t index = std::uniform_int_distribution<size_t>(0, allocations.size() - 1)(rng);
+            auto& v = allocations[index];
+            if (v.first) {
+              // map.erase((uintptr_t)v.first);
+              // char val = *((char*)v.first);
+              // for (size_t i = 0; i != 16 << j; ++i) {
+              //   if (((char*)v.first)[i] != val) {
+              //     fmt::printf("val mismatch\n");
+              //   }
+              // }
+              //fmt::printf("val %d ok\n", val);
+              deallocate(v);
+              v.first = nullptr;
+              ++freecount;
+            } else {
+              size_t s = std::uniform_int_distribution<size_t>(1, 4096)(rng);
+              //size_t s = std::uniform_int_distribution<size_t>(1, 4096 + 1024 * 1024 * j)(rng);
+              //size_t s = 1024 * 1024 * 2 + std::uniform_int_distribution<size_t>(1, 4096 + 1024 * 1024 * j)(rng);
+              //size_t s = std::uniform_int_distribution<size_t>(1, 32 << j)(rng);
+              v.second = s;
+              allocate(v);
+              std::memset(v.first, i, std::min(s, (size_t)1024 * 128));
+              //std::memset(v.first, i, 16);
+              // uintptr_t address = (uintptr_t)v.first;
+              // size_t size = s;
+              // for (auto& [base, s] : map) {
+              //   if (address < base + s && base < address + size) {
+              //     fmt::printf("allocation at %#x %d overlaps with existing allocation at %#x %d\n", address, size, base, s);
+              //     std::abort();
+              //   }
+              // }
+              // map[address] = size;
+              ++alloccount;
+            }
+          }
+
+          fmt::printf("thread %d: %d allocations, %d frees\n", index, alloccount, freecount);
+
+          fmt::printf("thread %d: took %g\n", index, seconds(Clock::now() - start));
+
+          // start = Clock::now();
+          freecount = 0;
+          for (auto& v : allocations) {
+            if (v.first) {
+              //map.erase((uintptr_t)v.first);
+              deallocate(v);
+              v.first = nullptr;
+              ++freecount;
+            }
+          }
+          // fmt::printf("deallocated %d in %g\n", freecount, seconds(Clock::now() - start));
+
+          // memfdAllocator.debugInfo();
+        }
+      }
+    };
+
+    //func(0);
+
+    std::vector<std::thread> threads;
+    for (size_t i = 0; i != 1; ++i) {
+      threads.emplace_back([&, i]{
+        func(i);
+      });
+    }
+
+    for (auto& v : threads) {
+      v.join();
+    }
+
+  }
+
+  return 0;
 
   // for (int i = 0; i != 10000000; ++i) {
   //   //uint64_t value = rand() | ((uint64_t)rand() << 32);
@@ -316,7 +441,7 @@ int main() {
         //   ++i2;
         // }
       }
-      printf("maxsize %d\n", maxsize);
+      fmt::printf("maxsize %d\n", maxsize);
     }
     assert(map.size() == std::distance(map.begin(), map.end()));
     auto end1 = Clock::now();
