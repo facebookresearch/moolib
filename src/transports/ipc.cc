@@ -173,8 +173,8 @@ struct ReadState {
         for (size_t i = 0; i != bufferSizes.size(); ++i) {
           if (i != 0) {
             //allocators.emplace_back(rpc::kCPU, bufferSizes[i]);
-            auto h = makeBuffer(bufferSizes[i], 0);
-            void* data = h->data();
+            auto h = makeBuffer(bufferSizes[i] + 63, 0);
+            void* data = (void*)(((uintptr_t)h->data() + (uintptr_t)63) & ~(uintptr_t)63);
             Buffer* bufferPointer = h.release();
             try {
               allocators.emplace_back(data, bufferSizes[i], rpc::kCPU, bufferPointer, [](void* ptr) {
