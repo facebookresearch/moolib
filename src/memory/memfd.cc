@@ -131,14 +131,14 @@ struct alignas(64) AllocatorImpl {
   }
 
   template<typename T>
-  size_t ctz(T v) {
+  size_t findFirstSetBit(T v) {
     static_assert(sizeof(T) == sizeof(long));
     return __builtin_ctzl(v);
   }
   template<typename T>
-  size_t clz(T v) {
+  size_t findLastSetBit(T v) {
     static_assert(sizeof(T) == sizeof(long));
-    return __builtin_clzl(v);
+    return (sizeof(T) * 8 - 1) ^ __builtin_clzl(v);
   }
 
   template<bool isDeallocation = false>
@@ -152,11 +152,11 @@ struct alignas(64) AllocatorImpl {
       size_t subindex;
       size_t nsize = size;
       if constexpr (!isDeallocation) {
-        index = sizeBits - 1 - clz(size);
+        index = findLastSetBit(size);
         nsize = size & ((size_t)-1 << (index - 3));
         index = index - (nsize & (nsize - 1) ? 0 : 1);
       } else {
-        index = sizeBits - 1 - clz(nsize - 1);
+        index = findLastSetBit(nsize - 1);
       }
       subindex = ((nsize - 1) >> (index - 3)) & 7;
       assert(nsize == getSizeFor(index, subindex));
@@ -177,7 +177,7 @@ struct alignas(64) AllocatorImpl {
   [[gnu::always_inline]]
   std::pair<void*, size_t> allocate(size_t size) {
     size = (size + alignof(std::max_align_t) - 1) & ~(alignof(std::max_align_t) - 1);
-    size_t index = sizeBits - 1 - clz(size - 1);
+    size_t index = findLastSetBit(size - 1);
     size_t subindex = ((size - 1) >> (index - 3)) & 7;
 
     assert(getSizeFor(index, subindex) >= size);
@@ -210,7 +210,7 @@ struct alignas(64) AllocatorImpl {
         subBits <<= subindex;
         if (subBits != 0) {
           freeIndex = index;
-          freeSubindex = ctz((size_t)subBits);
+          freeSubindex = findFirstSetBit((size_t)subBits);
           spanSize = getSizeFor(freeIndex, freeSubindex);
           partialMatch = true;
         }
@@ -223,9 +223,9 @@ struct alignas(64) AllocatorImpl {
         [[unlikely]];
         return {nullptr, 0};
       }
-      freeIndex = ctz(bits);
+      freeIndex = findFirstSetBit(bits);
       subBits = subBucketBits[freeIndex];
-      freeSubindex = ctz((size_t)subBits);
+      freeSubindex = findFirstSetBit((size_t)subBits);
       spanSize = getSizeFor(freeIndex, freeSubindex);
       assert(spanSize > allocSize);
     }
