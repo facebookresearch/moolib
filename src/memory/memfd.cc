@@ -66,7 +66,7 @@ Memfd Memfd::map(int fd, size_t size) {
   return r;
 }
 
-struct AllocatorImpl {
+struct alignas(64) AllocatorImpl {
   static_assert(sizeof(long) == sizeof(size_t));
   static constexpr size_t sizeBits = 8 * sizeof(size_t);
   size_t bucketBits = 0;
@@ -144,31 +144,30 @@ struct AllocatorImpl {
   template<bool isDeallocation = false>
   void addArea(void* ptr, size_t size) {
     uintptr_t address = (uintptr_t)ptr;
-    while (size >= (isDeallocation ? 0 : alignof(std::max_align_t))) {
+    while (true) {
       assert((address & (alignof(std::max_align_t) - 1)) == 0);
       assert(size >= alignof(std::max_align_t));
+      assert((size & (alignof(std::max_align_t) - 1)) == 0);
       size_t index;
       size_t subindex;
-      size_t nsize;
-      if (!isDeallocation) {
+      size_t nsize = size;
+      if constexpr (!isDeallocation) {
         index = sizeBits - 1 - clz(size);
-        subindex = (size >> (index - 3)) & 7;
-        nsize = (1ul << index) | ((1ul << (index - 3)) * subindex);
-        index = sizeBits - 1 - clz(nsize - 1);
-        subindex = ((nsize - 1) >> (index - 3)) & 7;
+        nsize = size & ((size_t)-1 << (index - 3));
+        index = index - (nsize & (nsize - 1) ? 0 : 1);
       } else {
-        index = sizeBits - 1 - clz((size - 1) | 8);
-        subindex = ((size - 1) >> (index - 3)) & 7;
-        assert(size == getSizeFor(index, subindex));
-        nsize = size;
+        index = sizeBits - 1 - clz(nsize - 1);
       }
+      subindex = ((nsize - 1) >> (index - 3)) & 7;
+      assert(nsize == getSizeFor(index, subindex));
+      assert(nsize <= size);
       bucketBits |= 1ul << index;
       subBucketBits[index] |= 1ul << subindex;
       assert(nsize == getSizeFor(index, subindex));
       pushSpan(index * 8u + subindex, address);
       address += nsize;
       size -= nsize;
-      if (isDeallocation) {
+      if (isDeallocation || size == 0) {
         assert(size == 0);
         break;
       }
@@ -178,7 +177,7 @@ struct AllocatorImpl {
   [[gnu::always_inline]]
   std::pair<void*, size_t> allocate(size_t size) {
     size = (size + alignof(std::max_align_t) - 1) & ~(alignof(std::max_align_t) - 1);
-    size_t index = sizeBits - 1 - clz((size - 1) | 8);
+    size_t index = sizeBits - 1 - clz(size - 1);
     size_t subindex = ((size - 1) >> (index - 3)) & 7;
 
     assert(getSizeFor(index, subindex) >= size);

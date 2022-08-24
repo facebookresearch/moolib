@@ -49,7 +49,6 @@ struct MemfdAllocator {
   AddressInfo getAddressInfo(void* ptr);
   std::pair<void*, size_t> allocate(size_t size);
   void deallocate(void* ptr, size_t size);
-  void debugInfo();
 };
 
 }
