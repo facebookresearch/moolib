@@ -66,7 +66,7 @@ std::shared_ptr<ResolveHandle> resolveIpAddress(std::string_view address, int po
         h->callback(nullptr, h->req.ar_result);
       } else {
         if (!asynchronous && e == EAI_ADDRFAMILY) {
-          throw std::system_error(EAFNOSUPPORT, std::generic_category());
+          throw std::system_error(EAFNOSUPPORT, std::generic_category(), "getaddrinfo_a");
         }
         std::string str = e == EAI_SYSTEM ? std::strerror(errno) : gai_strerror(e);
         Error e(std::move(str));
@@ -474,8 +474,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     msg.msg_controllen = sizeof(u.buf);
     msg.msg_iov = (::iovec*)vec;
     msg.msg_iovlen = std::min(veclen, (size_t)IOV_MAX);
-    msg.msg_control = nullptr;
-    msg.msg_controllen = 0;
     readTriggerCount.store(-0xffff, std::memory_order_relaxed);
     ssize_t r = ::recvmsg(fd, &msg, 0);
     wantsRead = true;
@@ -774,7 +772,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       sockaddr_storage addr;
       socklen_t addrlen = sizeof(addr);
       if (::getsockname(fd, (sockaddr*)&addr, &addrlen)) {
-        throw std::system_error(errno, std::generic_category());
+        throw std::system_error(errno, std::generic_category(), "getsockname");
       }
       return ipAndPort((const sockaddr*)&addr, addrlen);
     } else {
@@ -787,7 +785,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       sockaddr_storage addr;
       socklen_t addrlen = sizeof(addr);
       if (::getpeername(fd, (sockaddr*)&addr, &addrlen)) {
-        throw std::system_error(errno, std::generic_category());
+        throw std::system_error(errno, std::generic_category(), "getpeername");
       }
       return ipAndPort((const sockaddr*)&addr, addrlen);
     } else {
@@ -823,7 +821,7 @@ struct PollThread {
         if (errno == EINTR) {
           continue;
         }
-        throw std::system_error(errno, std::generic_category());
+        throw std::system_error(errno, std::generic_category(), "epoll_wait");
       }
       for (int i = 0; i != n; ++i) {
         if (events[i].events & (EPOLLIN | EPOLLERR)) {
@@ -855,7 +853,7 @@ struct PollThread {
     std::call_once(flag, [&] {
       fd = epoll_create1(EPOLL_CLOEXEC);
       if (fd == -1) {
-        throw std::system_error(errno, std::generic_category());
+        throw std::system_error(errno, std::generic_category(), "epoll_create1");
       }
       thread = std::thread([&] { entry(); });
     });
@@ -863,7 +861,7 @@ struct PollThread {
     e.data.ptr = &*impl;
     e.events = EPOLLIN | EPOLLOUT | EPOLLET;
     if (epoll_ctl(fd, EPOLL_CTL_ADD, impl->fd, &e)) {
-      throw std::system_error(errno, std::generic_category());
+      throw std::system_error(errno, std::generic_category(), "epoll_ctl");
     }
     impl->addedInPoll = true;
     activeList.push_back(std::move(impl));
@@ -902,7 +900,7 @@ Socket Socket::Unix() {
   r.impl->af = AF_UNIX;
   r.impl->fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
   if (r.impl->fd == -1) {
-    throw std::system_error(errno, std::generic_category());
+    throw std::system_error(errno, std::generic_category(), "socket");
   }
   poll::add(r.impl);
   return r;

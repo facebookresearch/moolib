@@ -172,7 +172,6 @@ struct ReadState {
         }
         for (size_t i = 0; i != bufferSizes.size(); ++i) {
           if (i != 0) {
-            //allocators.emplace_back(rpc::kCPU, bufferSizes[i]);
             auto h = makeBuffer(bufferSizes[i] + 63, 0);
             void* data = (void*)(((uintptr_t)h->data() + (uintptr_t)63) & ~(uintptr_t)63);
             Buffer* bufferPointer = h.release();
@@ -183,23 +182,6 @@ struct ReadState {
             } catch (...) {
               h = BufferHandle(bufferPointer);
             }
-            // auto a = memfdAllocator.allocate(bufferSizes[i]);
-            // if (!a.first) {
-            //   Error e("failed to allocated memory");
-            //   callback(&e, nullptr);
-            //   return;
-            // }
-            // Function<void()> func = [a]() {
-            //   memfdAllocator.deallocate(a.first, a.second);
-            // };
-            // FunctionPointer f = func.release();
-            // try {
-            //   allocators.emplace_back(a.first, bufferSizes[i], rpc::kCPU, f, [](void* ptr) {
-            //     Function<void()>((FunctionPointer)ptr)();
-            //   });
-            // } catch (...) {
-            //   func = f;
-            // }
           }
           iovec v;
           v.iov_len = bufferSizes[i];
