@@ -204,11 +204,12 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       size_t len = std::min(path.size(), sizeof(sa.sun_path) - 2);
       std::memcpy(&sa.sun_path[1], path.data(), len);
       if (::bind(fd, (const sockaddr*)&sa, sizeof(sa)) == -1) {
-        throw std::system_error(errno, std::generic_category());
+        throw std::system_error(errno, std::generic_category(), "bind");
       }
       if (::listen(fd, 50) == -1) {
-        throw std::system_error(errno, std::generic_category());
+        throw std::system_error(errno, std::generic_category(), "listen:");
       }
+      //fmt::printf("listening on %s\n", path);
     } else if (af == AF_INET) {
       wl.unlock();
       int port = 0;
@@ -313,6 +314,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     if (closed.load(std::memory_order_relaxed)) {
       return;
     }
+    //fmt::printf("connect AF %d address %s\n", af, address);
     if (af == AF_UNIX) {
       sockaddr_un sa;
       memset(&sa, 0, sizeof(sa));
@@ -322,9 +324,11 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       size_t len = std::min(path.size(), sizeof(sa.sun_path) - 2);
       std::memcpy(&sa.sun_path[1], path.data(), len);
       if (::connect(fd, (const sockaddr*)&sa, sizeof(sa)) && errno != EAGAIN) {
+        //fmt::printf("connect to %s failed\n", path);
         Error e(std::strerror(errno));
         std::move(callback)(&e);
       } else {
+        //fmt::printf("connected to %s\n", path);
         std::move(callback)(nullptr);
         std::unique_lock ql(writeQueueMutex);
         writeLoop(wl, ql);
@@ -528,6 +532,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     msg.msg_controllen = 0;
     msg.msg_flags = 0;
 
+    static_assert(sizeof(iovec) == sizeof(::iovec));
     msg.msg_iov = (::iovec*)vec;
     msg.msg_iovlen = std::min(veclen, (size_t)IOV_MAX);
     if (af == AF_UNIX) {
@@ -551,6 +556,9 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         }
       }
     }
+    // for (size_t i = 0; i != msg.msg_iovlen; ++i) {
+    //   fmt::printf("send iov %d %p %d\n", i, vec[i].iov_base, vec[i].iov_len);
+    // }
     writeTriggerCount.store(-0xffff, std::memory_order_relaxed);
     ssize_t r = ::sendmsg(fd, &msg, MSG_NOSIGNAL);
     bool canWrite = false;

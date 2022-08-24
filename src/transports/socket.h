@@ -10,6 +10,8 @@
 #include "rpc.h"
 #include "vector.h"
 
+#include "fmt/printf.h"
+
 #include <memory>
 #include <mutex>
 #include <string_view>
@@ -67,11 +69,13 @@ struct CachedReader {
   CachedReader(Socket* socket) : socket(socket) {}
   void newRead() {
     iovecs.clear();
+    //fmt::printf("new read\n");
   }
   void addIovec(const iovec& v) {
     iovecs.push_back(v);
   }
   void addIovec(void* dst, size_t len) {
+    //fmt::printf("add iovec %p %d\n", dst, len);
     iovecs.push_back(iovec{dst, len});
   }
   void startRead() {
@@ -116,7 +120,6 @@ struct CachedReader {
     size_t i = iovecsOffset;
     size_t e = iovecs.size() - 1;
     size_t n = socket->readv(iovecs.data() + iovecsOffset, iovecs.size() - iovecsOffset);
-    assert(e >= i);
     for (; i != e; ++i) {
       auto& v = iovecs[i];
       if (n >= v.iov_len) {
