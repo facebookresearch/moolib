@@ -7,12 +7,15 @@
 
 #pragma push_macro("likely")
 #pragma push_macro("unlikely")
-
+#undef likely
+#undef unlikely
 #define likely(x) __builtin_expect(bool(x), 1)
 #define unlikely(x) __builtin_expect(bool(x), 0)
 
+#pragma push_macro("assert")
 #undef assert
-#define assert(x) (bool(x) ? 0 : (printf("assert failure %s:%d\n", __FILE__, __LINE__), std::abort(), 0))
+//#define assert(x) (bool(x) ? 0 : (printf("assert failure %s:%d\n", __FILE__, __LINE__), std::abort(), 0))
+#define assert(x) 
 
 namespace moolib {
 
@@ -494,5 +497,6 @@ public:
 
 } // namespace moolib
 
+#pragma pop_macro("assert")
 #pragma pop_macro("likely")
 #pragma pop_macro("unlikely")

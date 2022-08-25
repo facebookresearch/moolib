@@ -32,6 +32,7 @@ thread_local bool callbackScheduledFromBackend = false;
 
 template<typename Key, typename Value, typename Hash = std::hash<Key>>
 using HashMap = moolib::HashMap<Key, Value, Hash>;
+//using HashMap = std::unordered_map<Key, Value, Hash>;
 
 async::SchedulerFifo scheduler;
 
@@ -210,7 +211,8 @@ struct FastClock {
   }
 };
 
-using Clock = std::chrono::steady_clock;
+//using Clock = std::chrono::steady_clock;
+using Clock = FastClock;
 
 template<typename Buffer>
 TensorContext getTensorContext(Buffer& buffer) {
