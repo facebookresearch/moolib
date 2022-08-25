@@ -77,9 +77,6 @@ struct CachedReader {
     iovecs.push_back(iovec{dst, len});
   }
   void startRead() {
-    // if (buffer.size() < 4096) {
-    //   buffer.resize(4096);
-    // }
     size_t iovecsOffset = 0;
     size_t skip = bufferFilled - bufferOffset;
     if (skip) {

@@ -66,6 +66,7 @@ struct Storage {
     static_assert(alignof(Header) <= 64 && alignof(Data) <= 64 && alignof(Data) <= sizeof(Header));
     Header* r = freelist;
     if (r) {
+      [[likely]];
       --freelistSize;
       freelist = r->next;
       return r;
@@ -82,6 +83,7 @@ struct Storage {
   }
   void deallocate(Header* ptr) {
     if (freelistSize >= std::min<size_t>(1024 * 1024 / Size, 128)) {
+      [[unlikely]];
       moveFreelistToGlobal();
     }
     ++freelistSize;
@@ -96,10 +98,6 @@ struct Storage {
 };
 
 } // namespace allocimpl
-
-inline std::unordered_map<size_t, size_t> allocsizes;
-inline std::mutex allocmutex;
-inline size_t nAllocs = 0;
 
 template<typename Header, typename Data>
 Header* allocate(size_t n) {

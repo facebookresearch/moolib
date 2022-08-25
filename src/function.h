@@ -17,8 +17,6 @@
 #include <type_traits>
 #include <utility>
 
-#include <unordered_map>
-
 namespace rpc {
 
 namespace function {

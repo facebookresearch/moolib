@@ -548,9 +548,6 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         }
       }
     }
-    // for (size_t i = 0; i != msg.msg_iovlen; ++i) {
-    //   fmt::printf("send iov %d %p %d\n", i, vec[i].iov_base, vec[i].iov_len);
-    // }
     writeTriggerCount.store(-0xffff, std::memory_order_relaxed);
     ssize_t r = ::sendmsg(fd, &msg, MSG_NOSIGNAL);
     bool canWrite = false;
