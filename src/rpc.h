@@ -258,7 +258,6 @@ struct Rpc {
     virtual ~FImpl() {}
     virtual void
     call(BufferHandle inbuffer, TensorContext& tensorContext, Function<void(BufferHandle)> callback) noexcept override {
-      TIME(FImplCall);
       try {
         std::tuple<std::decay_t<Args>...> args;
         constexpr bool takesStream =
@@ -267,10 +266,14 @@ struct Rpc {
         constexpr bool isDeferred =
             std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, Args...> ||
             std::is_invocable_r_v<void, F, RpcDeferredReturn<R>, std::optional<CUDAStream>, Args...>;
-        constexpr bool takesBuffer =
-            sizeof...(Args) == 1 && std::is_same_v<std::decay_t<decltype(std::get<0>(args))>, BufferHandle>;
+        constexpr bool takesBuffer = [] {
+          if constexpr (sizeof...(Args) == 1) {
+            return std::is_same_v<std::decay_t<std::tuple_element_t<0, std::tuple<Args...>>>, BufferHandle>;
+          } else {
+            return false;
+          }
+        }();
         auto in = [&]() {
-          TIME(FImplCallin);
           uint32_t rid, fid;
           if constexpr (takesBuffer) {
             std::get<0>(args) = std::move(inbuffer);
@@ -281,7 +284,6 @@ struct Rpc {
         };
         BufferHandle outbuffer;
         auto out = [this, &args, &outbuffer, &tensorContext]() {
-          TIME(FImplCallout);
           if constexpr (!isDeferred) {
             auto wrap = [&](auto&&... args) {
               if constexpr (takesStream) {
@@ -290,19 +292,16 @@ struct Rpc {
                 if (tensorContext.stream) {
                   tensorContext.stream->synchronize();
                 }
-                TIME(FImplWrapCall);
                 return f(std::forward<decltype(args)>(args)...);
               }
             };
             if constexpr (std::is_same_v<void, R>) {
               std::apply(wrap, std::move(args));
               serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqSuccess);
+            } else if constexpr (std::is_same_v<R, BufferHandle>) {
+              outbuffer = std::apply(wrap, std::move(args));
             } else {
-              if constexpr (std::is_same_v<R, BufferHandle>) {
-                outbuffer = std::apply(wrap, std::move(args));
-              } else {
-                serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqSuccess, std::apply(wrap, std::move(args)));
-              }
+              serializeToBuffer(outbuffer, (uint32_t)0, (uint32_t)reqSuccess, std::apply(wrap, std::move(args)));
             }
           }
         };
