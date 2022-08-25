@@ -319,14 +319,16 @@ struct APIWrapper : API {
 
 enum class ConnectionType { ipc, tcp, count };
 static const std::array<const char*, (int)ConnectionType::count> connectionTypeName = {
-    "IPC", "TCP",
+    "IPC",
+    "TCP",
 };
 static const std::array<const char*, (int)ConnectionType::count> connectionShortTypeName = {
-    "ipc", "tcp",
+    "ipc",
+    "tcp",
 };
 static const std::array<bool, (int)ConnectionType::count> connectionDefaultEnabled = {
-    true,  // ipc
-    true,  // tcp
+    true, // ipc
+    true, // tcp
 };
 
 template<typename API>
