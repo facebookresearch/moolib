@@ -26,44 +26,6 @@
 
 namespace rpc {
 
-extern thread_local std::array<const char*, 4000> names;
-extern thread_local std::array<uint64_t, 4000> times;
-
-extern thread_local bool timeEnabled;
-
-struct Timex {
-  size_t index;
-  uint64_t start = __rdtsc();
-  bool isDone = false;
-  Timex(int line, const char* name) : index(line) {
-    names[index] = name;
-  }
-  ~Timex() {
-    done();
-  }
-  void done() {
-    if (!isDone && timeEnabled) {
-      times[index] += __rdtsc() - start;
-      isDone = true;
-    }
-  }
-};
-
-struct TimexEnabler {
-  bool wasEnabled = timeEnabled;
-  TimexEnabler() {
-    timeEnabled = true;
-  }
-  ~TimexEnabler() {
-    timeEnabled = wasEnabled;
-  }
-};
-
-#define TIME(name) rpc::Timex timer__##name(__LINE__, #name);
-#define ENDTIME(name) timer__##name.done();
-
-#define ENABLE_TIME() rpc::TimexEnabler __timer__enabler;
-
 struct Error : std::exception {
   std::string str;
   Error() {}
