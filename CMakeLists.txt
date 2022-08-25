@@ -43,6 +43,7 @@ add_library(moorpc OBJECT
   src/async.cc
   src/transports/socket.cc
   src/transports/ipc.cc
+  src/memory/memfd.cc
 )
 target_link_libraries(moorpc PUBLIC tensor fmt anl)
 target_include_directories(moorpc PRIVATE src)
