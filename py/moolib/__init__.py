@@ -42,4 +42,5 @@ __all__ = [
     "set_log_level",
     "set_logging",
     "set_max_threads",
+    "examples",
 ]
