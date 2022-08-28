@@ -1783,14 +1783,16 @@ struct Rpc::Impl {
       if (timeout < std::chrono::seconds(1)) {
         timeout = std::chrono::seconds(1);
       }
-      if (!s.hasAddedFailureLatency && now - s.lastSendTimestamp >= timeout) {
+      if (!s.acked && !s.hasAddedFailureLatency && now - s.lastSendTimestamp >= timeout) {
         s.hasAddedFailureLatency = true;
         log("  -- rid %#x to %s   %s failed \n", o.rid, o.peer->name, connectionTypeName.at(s.connectionIndex));
         switchOnAPI(
             (ConnectionType)s.connectionIndex, [&](auto api) { addLatency<decltype(api)>(*o.peer, now, timeout, 1); });
       }
-      if (now - s.connection->lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::seconds(8)) {
-        log("Closing connection %s to %s due to timeout!\n", connectionTypeName.at(s.connectionIndex), o.peer->name);
+      if (!s.acked && now - s.lastSendTimestamp >= std::max(timeout * 2, std::chrono::milliseconds(4000)) &&
+          now - s.connection->lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::seconds(8)) {
+        log("Closing connection %s to %s due to timeout! (rid %#x)\n", connectionTypeName.at(s.connectionIndex),
+            o.peer->name, o.rid);
         auto& x = o.peer->connections_.at(s.connectionIndex);
         std::lock_guard l(x.mutex);
         for (size_t i = 0; i != x.conns.size(); ++i) {
@@ -1988,7 +1990,9 @@ struct Rpc::Impl {
         auto& x = p.connections_[ci];
         std::lock_guard l(x.mutex);
         for (size_t i = 0; i != x.conns.size(); ++i) {
-          if (now - x.conns[i]->lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::seconds(30)) {
+          // disabled until i figure out why it breaks things
+          if (false && now - x.conns[i]->lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::seconds(30)) {
+            log("closing conn due to long timeout\n");
             BufferHandle buffer;
             serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqClose);
             TensorContext nullTensorContext;
@@ -2006,14 +2010,17 @@ struct Rpc::Impl {
   void timeoutThreadEntry() {
     async::setCurrentThreadName("timeout");
     auto lastTimeoutConnections = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
     while (!terminate_.load(std::memory_order_relaxed)) {
       Deferrer defer;
-      auto now = std::chrono::steady_clock::now();
+      auto prevNow = now;
+      now = std::chrono::steady_clock::now();
+      auto loopTime = now - prevNow;
       auto timeout = timeout_.load(std::memory_order_relaxed);
       timeout = std::min(timeout, now + std::chrono::seconds(1));
 
       auto misc = [&]() {
-        auto nextRun = lastRanMisc.load() + std::chrono::milliseconds(250);
+        auto nextRun = lastRanMisc.load() + std::chrono::milliseconds(500);
         if (nextRun <= now) {
           lastRanMisc.store(now);
           collectFloatingConnections(now);
@@ -2029,6 +2036,10 @@ struct Rpc::Impl {
       };
 
       misc();
+
+      timeout = std::max(timeout, now + loopTime);
+      timeout = std::max(timeout, now + std::chrono::milliseconds(250));
+      timeout = std::min(timeout, now + std::chrono::seconds(4));
 
       while (now < timeout && !terminate_.load(std::memory_order_relaxed)) {
         timeoutSem_.wait_for(timeout - now);

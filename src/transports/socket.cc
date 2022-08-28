@@ -687,17 +687,18 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     }
     writeTriggerCount.store(-0xffff, std::memory_order_relaxed);
     ssize_t r = ::sendmsg(fd, &msg, MSG_NOSIGNAL);
-    bool canWrite = false;
+    bool canWrite = true;
     if (r == -1) {
       int e = errno;
       if (e == EAGAIN || e == EWOULDBLOCK) {
+        canWrite = false;
         r = 0;
       } else if (e == EINTR) {
         r = 0;
-        canWrite = true;
       }
     }
     if (r == -1) {
+      canWrite = false;
       int e = errno;
       Error ee(std::strerror(e));
       std::move(callbacks[0].second)(&ee);
@@ -727,9 +728,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         }
         r -= vec[offset].iov_len;
       }
-      canWrite = offset == msg.msg_iovlen;
       if (offset == veclen) {
-        canWrite = true;
         activeWrites.clear();
         activeWriteCallbacks.clear();
       } else {
