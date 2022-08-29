@@ -8,7 +8,6 @@
 #pragma once
 
 #include "rpc.h"
-
 #include <memory>
 #include <mutex>
 #include <string_view>
@@ -63,10 +62,9 @@ struct CachedReader {
   size_t bufferFilled = 0;
   size_t bufferOffset = 0;
   std::vector<char> buffer;
-  CachedReader(Socket& socket) : socket(&socket) {}
+  CachedReader(Socket* socket) : socket(socket) {}
   void newRead() {
     iovecs.clear();
-    iovecsOffset = 0;
   }
   void addIovec(const iovec& v) {
     iovecs.push_back(v);
@@ -75,10 +73,7 @@ struct CachedReader {
     iovecs.push_back(iovec{dst, len});
   }
   void startRead() {
-    if (buffer.size() < 4096) {
-      buffer.resize(4096);
-    }
-    iovecsOffset = 0;
+    size_t iovecsOffset = 0;
     size_t skip = bufferFilled - bufferOffset;
     if (skip) {
       size_t left = skip;
@@ -106,15 +101,16 @@ struct CachedReader {
       }
     }
     iovecs.push_back({buffer.data() + bufferFilled, buffer.size() - bufferFilled});
+    this->iovecsOffset = iovecsOffset;
   }
+  static constexpr size_t maxBufferSize = 256 * 1024;
   bool done() {
     if (iovecsOffset && iovecsOffset == iovecs.size() - 1) {
       return true;
     }
-    size_t n = socket->readv(iovecs.data() + iovecsOffset, iovecs.size() - iovecsOffset);
-    bool retval = false;
     size_t i = iovecsOffset;
     size_t e = iovecs.size() - 1;
+    size_t n = socket->readv(iovecs.data() + iovecsOffset, iovecs.size() - iovecsOffset);
     for (; i != e; ++i) {
       auto& v = iovecs[i];
       if (n >= v.iov_len) {
@@ -133,9 +129,8 @@ struct CachedReader {
     }
     if (i == e) {
       bufferFilled += n;
-      constexpr size_t maxBufferSize = 256 * 1024;
       if (bufferFilled == buffer.size() && buffer.size() < maxBufferSize) {
-        buffer.resize(std::min(buffer.size() * 2, maxBufferSize));
+        buffer.resize(std::max(std::min(buffer.size() * 2, maxBufferSize), (size_t)4096));
       }
       return true;
     }
@@ -148,7 +143,7 @@ struct CachedReader {
       return buffer.data() + o;
     }
     if (buffer.size() < bufferOffset + len) {
-      buffer.resize(bufferOffset + len);
+      buffer.resize(std::max((size_t)(bufferOffset + len), buffer.size() + buffer.size() / 2));
     }
     newRead();
     startRead();
@@ -156,6 +151,10 @@ struct CachedReader {
     if (bufferFilled - bufferOffset >= len) {
       size_t o = bufferOffset;
       bufferOffset += len;
+      if (bufferOffset == bufferFilled) {
+        bufferOffset = 0;
+        bufferFilled = 0;
+      }
       return buffer.data() + o;
     }
     return nullptr;
