@@ -9,8 +9,11 @@
 
 #include "any.h"
 
+#include <cstddef>
 #include <optional>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace rpc {
 
