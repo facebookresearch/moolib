@@ -20,7 +20,7 @@
 
 namespace rpc {
 
-inline memfd::MemfdAllocator memfdAllocator;
+inline memfd::MemfdAllocator& memfdAllocator = *new memfd::MemfdAllocator();
 
 namespace allocimpl {
 
