@@ -876,19 +876,19 @@ struct Batcher {
 
 namespace {
 
-py::object getBatchValue(std::optional<GilWrapper<py::args>>& args, std::optional<GilWrapper<py::kwargs>>& kwargs) {
+py::object getBatchValue(std::optional<py::args>& args, std::optional<py::kwargs>& kwargs) {
   py::object o;
   if (args) {
     if (kwargs) {
       py::tuple tup(2);
-      tup[0] = *std::move(*args);
-      tup[1] = *std::move(*kwargs);
+      tup[0] = std::move(*args);
+      tup[1] = std::move(*kwargs);
       o = tup;
     } else {
-      o = *std::move(*args);
+      o = std::move(*args);
     }
   } else if (kwargs) {
-    o = *std::move(*kwargs);
+    o = std::move(*kwargs);
   } else {
     o = py::none();
   }
@@ -896,9 +896,8 @@ py::object getBatchValue(std::optional<GilWrapper<py::args>>& args, std::optiona
 }
 
 template<typename F, typename... Args>
-decltype(auto) applyArgs(
-    std::optional<GilWrapper<py::args>>& args, std::optional<GilWrapper<py::kwargs>>& kwargs, F&& f, py::object& o,
-    Args&&... moreargs) {
+decltype(auto)
+applyArgs(std::optional<py::args>& args, std::optional<py::kwargs>& kwargs, F&& f, py::object& o, Args&&... moreargs) {
   if constexpr (std::is_same_v<std::decay_t<F>, py::function>) {
     if (args) {
       if (kwargs) {
@@ -1002,40 +1001,48 @@ struct RpcWrapper {
       } else {
         batcher = MyBatcher(batchSize);
       }
-      rpc->define<GilWrapper<py::object>(std::optional<GilWrapper<py::args>>, std::optional<GilWrapper<py::kwargs>>)>(
+      rpc->define<GilWrapper<py::object>(rpc::BufferHandle buffer)>(
           name, [batcher = std::move(batcher), callback = GilWrapper<py::function>(std::move(callback))](
-                    rpc::RpcDeferredReturn<GilWrapper<py::object>> returnCallback,
-                    std::optional<GilWrapper<py::args>> args, std::optional<GilWrapper<py::kwargs>> kwargs) mutable {
+                    rpc::RpcDeferredReturn<GilWrapper<py::object>> returnCallback, rpc::BufferHandle buffer) mutable {
             py::gil_scoped_acquire gil;
             if (_Py_IsFinalizing()) {
               return;
             }
             keepThreadAlive();
+            std::optional<py::args> args;
+            std::optional<py::kwargs> kwargs;
+            rpc::Rpc::deserializeArguments(buffer, args, kwargs);
             auto retval = batcher.stack(getBatchValue(args, kwargs), std::move(returnCallback));
             if (retval) {
               batcher.unbatch(applyArgs(args, kwargs, *callback, retval->first), retval->second);
             }
           });
     } else {
-      rpc->define<GilWrapper<py::object>(std::optional<GilWrapper<py::args>>, std::optional<GilWrapper<py::kwargs>>)>(
-          name, [callback = GilWrapper<py::function>(std::move(callback))](
-                    std::optional<GilWrapper<py::args>> args, std::optional<GilWrapper<py::kwargs>> kwargs) mutable {
+      rpc->define<rpc::BufferHandle(rpc::BufferHandle)>(
+          name, [callback = GilWrapper<py::function>(std::move(callback))](rpc::BufferHandle buffer) mutable {
             py::gil_scoped_acquire gil;
+            py::object retval;
             if (_Py_IsFinalizing()) {
-              return GilWrapper<py::object>(py::none());
-            }
-            keepThreadAlive();
-            if (args) {
-              if (kwargs) {
-                return GilWrapper<py::object>((*callback)(**std::move(*args), ***std::move(*kwargs)));
-              } else {
-                return GilWrapper<py::object>((*callback)(**std::move(*args)));
-              }
-            } else if (kwargs) {
-              return GilWrapper<py::object>((*callback)(***std::move(*kwargs)));
+              retval = py::none();
             } else {
-              return GilWrapper<py::object>((*callback)());
+              keepThreadAlive();
+              std::optional<py::args> args;
+              std::optional<py::kwargs> kwargs;
+              rpc::Rpc::deserializeArguments(buffer, args, kwargs);
+              if (args) {
+                if (kwargs) {
+                  retval = (*callback)(*std::move(*args), **std::move(*kwargs));
+                } else {
+                  retval = (*callback)(*std::move(*args));
+                }
+              } else if (kwargs) {
+                retval = (*callback)(**std::move(*kwargs));
+              } else {
+                retval = (*callback)();
+              }
             }
+            rpc::Rpc::serializeReturn(buffer, retval);
+            return buffer;
           });
     }
   }
@@ -1051,15 +1058,17 @@ struct RpcWrapper {
       } else {
         batcher = std::make_shared<MyBatcher>(batchSize);
       }
-      rpc->define<GilWrapper<py::object>(std::optional<GilWrapper<py::args>>, std::optional<GilWrapper<py::kwargs>>)>(
+      rpc->define<GilWrapper<py::object>(rpc::BufferHandle)>(
           name, [batcher = std::move(batcher), callback = GilWrapper<py::function>(std::move(callback))](
-                    rpc::RpcDeferredReturn<GilWrapper<py::object>> returnCallback,
-                    std::optional<GilWrapper<py::args>> args, std::optional<GilWrapper<py::kwargs>> kwargs) mutable {
+                    rpc::RpcDeferredReturn<GilWrapper<py::object>> returnCallback, rpc::BufferHandle buffer) mutable {
             py::gil_scoped_acquire gil;
             if (_Py_IsFinalizing()) {
               return;
             }
             keepThreadAlive();
+            std::optional<py::args> args;
+            std::optional<py::kwargs> kwargs;
+            rpc::Rpc::deserializeArguments(buffer, args, kwargs);
             auto retval = batcher->stack(getBatchValue(args, kwargs), std::move(returnCallback));
             if (retval) {
               py::object o = std::move(retval->first);
@@ -1070,23 +1079,25 @@ struct RpcWrapper {
             }
           });
     } else {
-      rpc->define<GilWrapper<py::object>(std::optional<GilWrapper<py::args>>, std::optional<GilWrapper<py::kwargs>>)>(
+      rpc->define<GilWrapper<py::object>(rpc::BufferHandle)>(
           name, [callback = GilWrapper<py::function>(std::move(callback))](
-                    rpc::RpcDeferredReturn<GilWrapper<py::object>> returnCallback,
-                    std::optional<GilWrapper<py::args>> args, std::optional<GilWrapper<py::kwargs>> kwargs) mutable {
+                    rpc::RpcDeferredReturn<GilWrapper<py::object>> returnCallback, rpc::BufferHandle buffer) mutable {
             py::gil_scoped_acquire gil;
             if (_Py_IsFinalizing()) {
               return;
             }
             keepThreadAlive();
+            std::optional<py::args> args;
+            std::optional<py::kwargs> kwargs;
+            rpc::Rpc::deserializeArguments(buffer, args, kwargs);
             if (args) {
               if (kwargs) {
-                (*callback)(std::move(returnCallback), **std::move(*args), ***std::move(*kwargs));
+                (*callback)(std::move(returnCallback), *std::move(*args), **std::move(*kwargs));
               } else {
-                (*callback)(std::move(returnCallback), **std::move(*args));
+                (*callback)(std::move(returnCallback), *std::move(*args));
               }
             } else if (kwargs) {
-              (*callback)(std::move(returnCallback), ***std::move(*kwargs));
+              (*callback)(std::move(returnCallback), **std::move(*kwargs));
             } else {
               (*callback)(std::move(returnCallback));
             }
@@ -1119,15 +1130,17 @@ struct RpcWrapper {
         } else {
           batcher = std::make_shared<MyBatcher>(batchSize);
         }
-        rpc->define<GilWrapper<py::object>(std::optional<GilWrapper<py::args>>, std::optional<GilWrapper<py::kwargs>>)>(
+        rpc->define<GilWrapper<py::object>(rpc::BufferHandle)>(
             name, [batcher = std::move(batcher),
-                   q](rpc::RpcDeferredReturn<GilWrapper<py::object>> returnCallback,
-                      std::optional<GilWrapper<py::args>> args, std::optional<GilWrapper<py::kwargs>> kwargs) mutable {
+                   q](rpc::RpcDeferredReturn<GilWrapper<py::object>> returnCallback, rpc::BufferHandle buffer) mutable {
               py::gil_scoped_acquire gil;
               if (_Py_IsFinalizing()) {
                 return;
               }
               keepThreadAlive();
+              std::optional<py::args> args;
+              std::optional<py::kwargs> kwargs;
+              rpc::Rpc::deserializeArguments(buffer, args, kwargs);
               auto retval = batcher->stack(getBatchValue(args, kwargs), std::move(returnCallback));
               if (retval) {
                 py::object o = std::move(retval->first);
