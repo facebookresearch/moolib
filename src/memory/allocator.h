@@ -9,6 +9,9 @@
 
 #include "synchronization.h"
 
+#include "memfd.h"
+
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdlib>
@@ -16,6 +19,8 @@
 #include <vector>
 
 namespace rpc {
+
+inline memfd::MemfdAllocator memfdAllocator;
 
 namespace allocimpl {
 
@@ -33,54 +38,53 @@ struct Storage {
   ~Storage() {
     for (Header* ptr = freelist; ptr;) {
       Header* next = ptr->next;
-      std::free(ptr);
+      memfdAllocator.deallocate(ptr, ptr->capacity + sizeof(Header));
       ptr = next;
     }
   }
 
   inline static GlobalList global;
 
+  Header* allocateFromGlobal() {
+    std::unique_lock l(global.mutex);
+    if (!global.list.empty()) {
+      freelist = global.list.back().first;
+      freelistSize = global.list.back().second;
+      global.list.pop_back();
+      l.unlock();
+      return allocate();
+    }
+    l.unlock();
+    auto a = memfdAllocator.allocate(size);
+    Header* r = (Header*)a.first;
+    new (r) Header();
+    r->capacity = size - sizeof(Header);
+    return r;
+  }
+
   Header* allocate() {
     static_assert(alignof(Header) <= 64 && alignof(Data) <= 64 && alignof(Data) <= sizeof(Header));
     Header* r = freelist;
-    if (!r) {
-      std::unique_lock l(global.mutex);
-      if (!global.list.empty()) {
-        freelist = global.list.back().first;
-        freelistSize = global.list.back().second;
-        global.list.pop_back();
-        l.unlock();
-        return allocate();
-      }
-      l.unlock();
-      r = (Header*)aligned_alloc(64, size);
-      new (r) Header();
-      r->capacity = size - sizeof(Header);
-    } else {
+    if (r) {
+      [[likely]];
       --freelistSize;
       freelist = r->next;
-      if (r->capacity != size - sizeof(Header)) {
-        std::abort();
-      }
-      if (r->refcount != 0) {
-        std::abort();
-      }
+      return r;
+    } else {
+      return allocateFromGlobal();
     }
-    if (r->refcount != 0) {
-      std::abort();
-    }
-    return r;
+  }
+  void moveFreelistToGlobal() {
+    std::unique_lock l(global.mutex);
+    global.list.push_back({freelist, freelistSize});
+    l.unlock();
+    freelist = nullptr;
+    freelistSize = 0;
   }
   void deallocate(Header* ptr) {
-    if (ptr->refcount != 0) {
-      std::abort();
-    }
     if (freelistSize >= std::min<size_t>(1024 * 1024 / Size, 128)) {
-      std::unique_lock l(global.mutex);
-      global.list.push_back({freelist, freelistSize});
-      l.unlock();
-      freelist = nullptr;
-      freelistSize = 0;
+      [[unlikely]];
+      moveFreelistToGlobal();
     }
     ++freelistSize;
     ptr->next = freelist;
@@ -97,7 +101,6 @@ struct Storage {
 
 template<typename Header, typename Data>
 Header* allocate(size_t n) {
-
   constexpr size_t overhead = sizeof(Header);
   if (n + overhead <= 64) {
     return allocimpl::Storage<Header, Data, 64>::get().allocate();
@@ -108,9 +111,10 @@ Header* allocate(size_t n) {
   } else if (n + overhead <= 4096) {
     return allocimpl::Storage<Header, Data, 4096>::get().allocate();
   } else {
-    Header* h = (Header*)aligned_alloc(64, (sizeof(Header) + sizeof(Data) * n + 63) / 64 * 64);
+    auto a = memfdAllocator.allocate((sizeof(Header) + sizeof(Data) * n + 63) / 64 * 64);
+    Header* h = (Header*)a.first;
     new (h) Header();
-    h->capacity = n;
+    h->capacity = a.second - sizeof(Header);
     return h;
   }
 }
@@ -131,10 +135,7 @@ void deallocate(Header* ptr) {
     allocimpl::Storage<Header, Data, 4096>::get().deallocate(ptr);
     break;
   default:
-    if (n <= 4096 || ptr->refcount != 0) {
-      std::abort();
-    }
-    std::free(ptr);
+    memfdAllocator.deallocate(ptr, ptr->capacity + sizeof(Header));
   }
 }
 template<typename Data, typename Header>

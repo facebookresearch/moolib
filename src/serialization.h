@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "buffer.h"
+#include "memory/buffer.h"
 
 #include <cstddef>
 #include <cstring>
