@@ -8,6 +8,10 @@
 #pragma once
 
 #include "rpc.h"
+#include "vector.h"
+
+#include "fmt/printf.h"
+
 #include <memory>
 #include <mutex>
 #include <string_view>
@@ -56,12 +60,12 @@ struct Socket {
 };
 
 struct CachedReader {
-  std::vector<iovec> iovecs;
+  moolib::Vector<iovec> iovecs;
   size_t iovecsOffset;
   Socket* socket;
   size_t bufferFilled = 0;
   size_t bufferOffset = 0;
-  std::vector<char> buffer;
+  moolib::Vector<char> buffer;
   CachedReader(Socket* socket) : socket(socket) {}
   void newRead() {
     iovecs.clear();

@@ -7,10 +7,10 @@
 
 #include "socket.h"
 
-#include "fmt/printf.h"
 #include "rpc.h"
+#include "vector.h"
 
-#include <type_traits>
+#include "fmt/printf.h"
 
 #include <limits.h>
 #include <netdb.h>
@@ -21,9 +21,12 @@
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <sys/un.h>
+#include <type_traits>
 #include <unistd.h>
 
 namespace rpc {
+
+using moolib::Vector;
 
 namespace poll {
 void add(std::shared_ptr<SocketImpl> impl);
@@ -63,7 +66,7 @@ std::shared_ptr<ResolveHandle> resolveIpAddress(std::string_view address, int po
         h->callback(nullptr, h->req.ar_result);
       } else {
         if (!asynchronous && e == EAI_ADDRFAMILY) {
-          throw std::system_error(EAFNOSUPPORT, std::generic_category());
+          throw std::system_error(EAFNOSUPPORT, std::generic_category(), "getaddrinfo_a");
         }
         std::string str = e == EAI_SYSTEM ? std::strerror(errno) : gai_strerror(e);
         Error e(std::move(str));
@@ -128,159 +131,6 @@ static std::pair<std::string_view, int> decodeIpAddress(std::string_view address
   return {hostname, port};
 }
 
-template<typename T>
-struct Container {
-  T* storagebegin = nullptr;
-  T* storageend = nullptr;
-  T* beginptr = nullptr;
-  T* endptr = nullptr;
-  size_t msize = 0;
-  Container() = default;
-  Container(const Container&) = delete;
-  Container(Container&& n) {
-    *this = std::move(n);
-  }
-  ~Container() {
-    if (beginptr != endptr) {
-      clear();
-    }
-    if (storagebegin) {
-      std::free(storagebegin);
-    }
-  }
-  Container& operator=(const Container&) = delete;
-  Container& operator=(Container&& n) {
-    std::swap(storagebegin, n.storagebegin);
-    std::swap(storageend, n.storageend);
-    std::swap(beginptr, n.beginptr);
-    std::swap(endptr, n.endptr);
-    std::swap(msize, n.msize);
-    return *this;
-  }
-  size_t size() {
-    return msize;
-  }
-  T* data() {
-    return beginptr;
-  }
-  T* begin() {
-    return beginptr;
-  }
-  T* end() {
-    return endptr;
-  }
-  T& operator[](size_t index) {
-    return beginptr[index];
-  }
-  void clear() noexcept {
-    erase(begin(), end());
-  }
-  void move(T* dst, T* begin, T* end) noexcept {
-    if constexpr (std::is_trivially_copyable_v<T>) {
-      std::memmove((void*)dst, (void*)begin, (end - begin) * sizeof(T));
-    } else {
-      if (dst <= begin) {
-        for (auto* i = begin; i != end;) {
-          *dst = std::move(*i);
-          ++dst;
-          ++i;
-        }
-      } else {
-        auto* dsti = dst + (end - begin);
-        for (auto* i = end; i != begin;) {
-          --dsti;
-          --i;
-          *dsti = std::move(*i);
-        }
-      }
-    }
-  }
-  void erase(T* begin, T* end) noexcept {
-    for (auto* i = begin; i != end; ++i) {
-      i->~T();
-    }
-    size_t n = end - begin;
-    msize -= n;
-    if (begin == beginptr) {
-      beginptr = end;
-      if (beginptr != endptr) {
-        size_t unused = beginptr - storagebegin;
-        if (unused > msize && unused >= 1024 * 512 / sizeof(T)) {
-          if constexpr (std::is_trivially_copyable_v<T>) {
-            move(storagebegin, beginptr, endptr);
-          } else {
-            auto* sbi = storagebegin;
-            auto* bi = beginptr;
-            while (sbi != beginptr && bi != endptr) {
-              new (sbi) T(std::move(*bi));
-              ++sbi;
-              ++bi;
-            }
-            move(sbi, bi, endptr);
-            for (auto* i = bi; i != endptr; ++i) {
-              i->~T();
-            }
-          }
-          beginptr = storagebegin;
-          endptr = beginptr + msize;
-        }
-      }
-    } else {
-      move(begin, end, endptr);
-      for (auto* i = end; i != endptr; ++i) {
-        i->~T();
-      }
-      endptr -= n;
-    }
-    if (beginptr == endptr) {
-      beginptr = storagebegin;
-      endptr = beginptr;
-    }
-  }
-  bool empty() const {
-    return beginptr == endptr;
-  }
-  size_t capacity() {
-    return storageend - storagebegin;
-  }
-  void reserve(size_t n) noexcept {
-    if (n <= capacity()) {
-      return;
-    }
-    T* newptr = (T*)std::aligned_alloc(alignof(T), sizeof(T) * n);
-    if (storagebegin) {
-      T* dst = newptr;
-      for (T* i = beginptr; i != endptr; ++i) {
-        new (dst) T(std::move(*i));
-        i->~T();
-        ++dst;
-      }
-      std::free(storagebegin);
-    }
-    storagebegin = newptr;
-    storageend = newptr + n;
-    beginptr = newptr;
-    endptr = newptr + msize;
-  }
-  void expand() {
-    reserve(std::max(capacity() * 2, (size_t)16));
-  }
-  template<typename V>
-  void push_back(V&& v) {
-    emplace_back(std::forward<V>(v));
-  }
-  template<typename... Args>
-  void emplace_back(Args&&... args) noexcept {
-    if (endptr == storageend) {
-      [[unlikely]];
-      expand();
-    }
-    new (endptr) T(std::forward<Args>(args)...);
-    ++endptr;
-    ++msize;
-  }
-};
-
 uint32_t writeFdFlag = 0x413ffc3f;
 
 thread_local SocketImpl* inReadLoop = nullptr;
@@ -294,13 +144,13 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
 
   alignas(64) std::atomic_int writeTriggerCount = 0;
   SpinMutex writeQueueMutex;
-  Container<iovec> queuedWrites;
-  Container<std::pair<size_t, Function<void(Error*)>>> queuedWriteCallbacks;
+  Vector<iovec> queuedWrites;
+  Vector<std::pair<size_t, Function<void(Error*)>>> queuedWriteCallbacks;
   SpinMutex writeMutex;
-  Container<iovec> newWrites;
-  Container<std::pair<size_t, Function<void(Error*)>>> newWriteCallbacks;
-  Container<iovec> activeWrites;
-  Container<std::pair<size_t, Function<void(Error*)>>> activeWriteCallbacks;
+  Vector<iovec> newWrites;
+  Vector<std::pair<size_t, Function<void(Error*)>>> newWriteCallbacks;
+  Vector<iovec> activeWrites;
+  Vector<std::pair<size_t, Function<void(Error*)>>> activeWriteCallbacks;
 
   alignas(64) std::atomic_int readTriggerCount = 0;
   bool wantsRead = false;
@@ -352,10 +202,10 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       size_t len = std::min(path.size(), sizeof(sa.sun_path) - 2);
       std::memcpy(&sa.sun_path[1], path.data(), len);
       if (::bind(fd, (const sockaddr*)&sa, sizeof(sa)) == -1) {
-        throw std::system_error(errno, std::generic_category());
+        throw std::system_error(errno, std::generic_category(), "bind");
       }
       if (::listen(fd, 50) == -1) {
-        throw std::system_error(errno, std::generic_category());
+        throw std::system_error(errno, std::generic_category(), "listen:");
       }
     } else if (af == AF_INET) {
       wl.unlock();
@@ -610,10 +460,14 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       return 0;
     }
     msghdr msg = {0};
+    union {
+      char buf[CMSG_SPACE(sizeof(int))];
+      cmsghdr align;
+    } u;
+    msg.msg_control = u.buf;
+    msg.msg_controllen = sizeof(u.buf);
     msg.msg_iov = (::iovec*)vec;
     msg.msg_iovlen = std::min(veclen, (size_t)IOV_MAX);
-    msg.msg_control = nullptr;
-    msg.msg_controllen = 0;
     readTriggerCount.store(-0xffff, std::memory_order_relaxed);
     ssize_t r = ::recvmsg(fd, &msg, 0);
     wantsRead = true;
@@ -639,6 +493,14 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         }
         return 0;
       }
+      if (msg.msg_controllen != 0) {
+        cmsghdr* cmsg = CMSG_FIRSTHDR(&msg);
+        if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+          int fd;
+          std::memcpy(&fd, CMSG_DATA(cmsg), sizeof(fd));
+          receivedFds.push_back(fd);
+        }
+      }
       return r;
     }
   }
@@ -662,6 +524,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     msg.msg_controllen = 0;
     msg.msg_flags = 0;
 
+    static_assert(sizeof(iovec) == sizeof(::iovec));
     msg.msg_iov = (::iovec*)vec;
     msg.msg_iovlen = std::min(veclen, (size_t)IOV_MAX);
     if (af == AF_UNIX) {
@@ -899,7 +762,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       sockaddr_storage addr;
       socklen_t addrlen = sizeof(addr);
       if (::getsockname(fd, (sockaddr*)&addr, &addrlen)) {
-        throw std::system_error(errno, std::generic_category());
+        throw std::system_error(errno, std::generic_category(), "getsockname");
       }
       return ipAndPort((const sockaddr*)&addr, addrlen);
     } else {
@@ -912,7 +775,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
       sockaddr_storage addr;
       socklen_t addrlen = sizeof(addr);
       if (::getpeername(fd, (sockaddr*)&addr, &addrlen)) {
-        throw std::system_error(errno, std::generic_category());
+        throw std::system_error(errno, std::generic_category(), "getpeername");
       }
       return ipAndPort((const sockaddr*)&addr, addrlen);
     } else {
@@ -948,7 +811,7 @@ struct PollThread {
         if (errno == EINTR) {
           continue;
         }
-        throw std::system_error(errno, std::generic_category());
+        throw std::system_error(errno, std::generic_category(), "epoll_wait");
       }
       for (int i = 0; i != n; ++i) {
         if (events[i].events & (EPOLLIN | EPOLLERR)) {
@@ -980,7 +843,7 @@ struct PollThread {
     std::call_once(flag, [&] {
       fd = epoll_create1(EPOLL_CLOEXEC);
       if (fd == -1) {
-        throw std::system_error(errno, std::generic_category());
+        throw std::system_error(errno, std::generic_category(), "epoll_create1");
       }
       thread = std::thread([&] { entry(); });
     });
@@ -988,7 +851,7 @@ struct PollThread {
     e.data.ptr = &*impl;
     e.events = EPOLLIN | EPOLLOUT | EPOLLET;
     if (epoll_ctl(fd, EPOLL_CTL_ADD, impl->fd, &e)) {
-      throw std::system_error(errno, std::generic_category());
+      throw std::system_error(errno, std::generic_category(), "epoll_ctl");
     }
     impl->addedInPoll = true;
     activeList.push_back(std::move(impl));
@@ -1027,7 +890,7 @@ Socket Socket::Unix() {
   r.impl->af = AF_UNIX;
   r.impl->fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
   if (r.impl->fd == -1) {
-    throw std::system_error(errno, std::generic_category());
+    throw std::system_error(errno, std::generic_category(), "socket");
   }
   poll::add(r.impl);
   return r;
