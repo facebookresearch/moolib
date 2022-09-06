@@ -11,12 +11,6 @@
 
 #include "transports/ipc.h"
 
-#include <tensorpipe/tensorpipe.h>
-
-#ifdef USE_CUDA
-#include <tensorpipe/tensorpipe_cuda.h>
-#endif
-
 #include "fmt/printf.h"
 
 #include <deque>
@@ -242,192 +236,6 @@ static std::pair<std::string_view, int> decodeIpAddress(std::string_view address
   return {hostname, port};
 }
 
-struct TPSHMContext {
-  tensorpipe::Context& context = [] {
-    static tensorpipe::Context context = [] {
-      tensorpipe::Context context;
-#ifndef __APPLE__
-      context.registerTransport(0, "shm", tensorpipe::transport::shm::create());
-#endif
-      auto basic = tensorpipe::channel::basic::create();
-      context.registerChannel(0, "basic", basic);
-#ifdef USE_CUDA
-      reg("shm/cuda_basic",
-          [&] { context.registerChannel(1, "cuda_basic", tensorpipe::channel::cuda_basic::create(basic)); });
-      reg("shm/cuda_ipc", [&] { context.registerChannel(2, "cuda_ipc", tensorpipe::channel::cuda_ipc::create()); });
-#endif
-      return context;
-    }();
-    return std::ref(context);
-  }();
-  TPSHMContext() {}
-  auto listen(std::string_view addr) {
-    return context.listen({"shm://" + std::string(addr)});
-  }
-  auto connect(std::string_view addr) {
-    return context.connect("shm://" + std::string(addr));
-  }
-};
-
-struct API_TPSHM {
-  using Context = TPSHMContext;
-  using Connection = std::shared_ptr<tensorpipe::Pipe>;
-  using Listener = std::shared_ptr<tensorpipe::Listener>;
-
-  static constexpr bool addressIsIp = false;
-  static constexpr bool supportsCuda = true;
-  static constexpr bool isTensorpipe = true;
-
-  static std::vector<std::string> defaultAddr() {
-    return {randomAddress()};
-  }
-  static std::string localAddr([[maybe_unused]] const Listener& listener, std::string addr) {
-    return addr;
-  }
-  static std::string localAddr([[maybe_unused]] const Connection&) {
-    return "";
-  }
-  static std::string remoteAddr([[maybe_unused]] const Connection&) {
-    return "";
-  }
-
-  static auto& cast(Connection& x) {
-    return *x;
-  }
-  static auto& cast(Listener& x) {
-    return *x;
-  }
-  static std::string errstr(const tensorpipe::Error& err) {
-    return err.what();
-  }
-};
-
-struct TPUVContext {
-  tensorpipe::Context& context = [] {
-    static tensorpipe::Context context = [] {
-      tensorpipe::Context context;
-      context.registerTransport(0, "uv", tensorpipe::transport::uv::create());
-      auto basic = tensorpipe::channel::basic::create();
-      context.registerChannel(0, "basic", basic);
-#ifdef USE_CUDA
-      reg("uv/cuda_basic",
-          [&] { context.registerChannel(-1, "cuda_basic", tensorpipe::channel::cuda_basic::create(basic)); });
-      // reg("uv/cuda_gdr", [&] { context.registerChannel(2, "cuda_gdr", tensorpipe::channel::cuda_gdr::create()); });
-#endif
-      return context;
-    }();
-    return std::ref(context);
-  }();
-  TPUVContext() {}
-  auto listen(std::string_view addr) {
-    return context.listen({"uv://" + std::string(addr)});
-  }
-  auto connect(std::string_view addr) {
-    return context.connect("uv://" + std::string(addr));
-  }
-};
-
-struct API_TPUV {
-  using Context = TPUVContext;
-  using Connection = std::shared_ptr<tensorpipe::Pipe>;
-  using Listener = std::shared_ptr<tensorpipe::Listener>;
-
-  static constexpr bool addressIsIp = true;
-  static constexpr bool supportsCuda = false;
-  static constexpr bool isTensorpipe = true;
-
-  static std::vector<std::string> defaultAddr() {
-    return {"0.0.0.0", "::"};
-  }
-
-  static std::string localAddr([[maybe_unused]] const Listener& listener, [[maybe_unused]] std::string addr) {
-    for (auto& v : listener->addresses()) {
-      return v.second;
-    }
-    return "";
-  }
-  static std::string localAddr([[maybe_unused]] const Connection& x) {
-    return x->localAddr();
-  }
-  static std::string remoteAddr([[maybe_unused]] const Connection& x) {
-    return x->remoteAddr();
-  }
-
-  static auto& cast(Connection& x) {
-    return *x;
-  }
-  static auto& cast(Listener& x) {
-    return *x;
-  }
-  static std::string errstr(const tensorpipe::Error& err) {
-    return err.what();
-  }
-};
-
-struct TPIBVContext {
-  tensorpipe::Context& context = [] {
-    static tensorpipe::Context context = [] {
-      tensorpipe::Context context;
-#ifndef __APPLE__
-      context.registerTransport(0, "ibv", tensorpipe::transport::ibv::create());
-#endif
-      auto basic = tensorpipe::channel::basic::create();
-      context.registerChannel(0, "basic", basic);
-#ifdef USE_CUDA
-      reg("ibv/cuda_basic",
-          [&] { context.registerChannel(1, "cuda_basic", tensorpipe::channel::cuda_basic::create(basic)); });
-      reg("ibv/cuda_gdr", [&] { context.registerChannel(2, "cuda_gdr", tensorpipe::channel::cuda_gdr::create()); });
-#endif
-      return context;
-    }();
-    return std::ref(context);
-  }();
-  TPIBVContext() {}
-  auto listen(std::string_view addr) {
-    return context.listen({"ibv://" + std::string(addr)});
-  }
-  auto connect(std::string_view addr) {
-    return context.connect("ibv://" + std::string(addr));
-  }
-};
-
-struct API_TPIBV {
-  using Context = TPIBVContext;
-  using Connection = std::shared_ptr<tensorpipe::Pipe>;
-  using Listener = std::shared_ptr<tensorpipe::Listener>;
-
-  static constexpr bool addressIsIp = true;
-  static constexpr bool supportsCuda = true;
-  static constexpr bool isTensorpipe = true;
-
-  static std::vector<std::string> defaultAddr() {
-    return {"0.0.0.0", "::"};
-  }
-
-  static std::string localAddr([[maybe_unused]] const Listener& listener, [[maybe_unused]] std::string addr) {
-    for (auto& v : listener->addresses()) {
-      return v.second;
-    }
-    return "";
-  }
-  static std::string localAddr([[maybe_unused]] const Connection& x) {
-    return "";
-  }
-  static std::string remoteAddr([[maybe_unused]] const Connection& x) {
-    return "";
-  }
-
-  static auto& cast(Connection& x) {
-    return *x;
-  }
-  static auto& cast(Listener& x) {
-    return *x;
-  }
-  static std::string errstr(const tensorpipe::Error& err) {
-    return err.what();
-  }
-};
-
 struct API_IPC {
   using Context = ipc::UnixContext;
   using Connection = std::shared_ptr<ipc::Connection>;
@@ -435,7 +243,6 @@ struct API_IPC {
 
   static constexpr bool addressIsIp = false;
   static constexpr bool supportsCuda = false;
-  static constexpr bool isTensorpipe = false;
 
   static std::vector<std::string> defaultAddr() {
     return {randomAddress()};
@@ -468,7 +275,6 @@ struct API_TCP {
 
   static constexpr bool addressIsIp = true;
   static constexpr bool supportsCuda = false;
-  static constexpr bool isTensorpipe = false;
 
   static std::vector<std::string> defaultAddr() {
     return {"0.0.0.0", "[::]"};
@@ -511,35 +317,22 @@ struct APIWrapper : API {
   }
 };
 
-enum class ConnectionType { uv, shm, ibv, ipc, tcp, count };
+enum class ConnectionType { ipc, tcp, count };
 static const std::array<const char*, (int)ConnectionType::count> connectionTypeName = {
-    "TCP/IP", "Shared memory", "InfiniBand", "IPC", "TCP",
+    "IPC",
+    "TCP",
 };
 static const std::array<const char*, (int)ConnectionType::count> connectionShortTypeName = {
-    "uv", "shm", "ibv", "ipc", "tcp",
+    "ipc",
+    "tcp",
 };
 static const std::array<bool, (int)ConnectionType::count> connectionDefaultEnabled = {
-    false, // uv
-    false, // shm
-    false, // ibv
-    true,  // ipc
-    true,  // tcp
+    true, // ipc
+    true, // tcp
 };
 
 template<typename API>
 struct index_t;
-template<>
-struct index_t<API_TPUV> {
-  static constexpr ConnectionType value = ConnectionType::uv;
-};
-template<>
-struct index_t<API_TPSHM> {
-  static constexpr ConnectionType value = ConnectionType::shm;
-};
-template<>
-struct index_t<API_TPIBV> {
-  static constexpr ConnectionType value = ConnectionType::ibv;
-};
 template<>
 struct index_t<API_IPC> {
   static constexpr ConnectionType value = ConnectionType::ipc;
@@ -554,12 +347,6 @@ constexpr size_t index = (size_t)index_t<API>::value;
 template<typename F>
 auto switchOnAPI(ConnectionType t, F&& f) {
   switch (t) {
-  case ConnectionType::uv:
-    return f(API_TPUV{});
-  case ConnectionType::shm:
-    return f(API_TPSHM{});
-  case ConnectionType::ibv:
-    return f(API_TPIBV{});
   case ConnectionType::ipc:
     return f(API_IPC{});
   case ConnectionType::tcp:
@@ -571,13 +358,7 @@ auto switchOnAPI(ConnectionType t, F&& f) {
 
 template<typename F>
 auto switchOnScheme(std::string_view str, F&& f) {
-  if (str == "uv") {
-    return f(API_TPUV{});
-  } else if (str == "shm") {
-    return f(API_TPSHM{});
-  } else if (str == "ibv") {
-    return f(API_TPIBV{});
-  } else if (str == "ipc") {
+  if (str == "ipc") {
     return f(API_IPC{});
   } else if (str == "tcp") {
     return f(API_TCP{});
@@ -1151,177 +932,24 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
     send(std::move(buffer), nullTensorContext, defer);
   }
 
-  void readTensorpipe(Me<RpcConnectionImpl>&& me) {
-    rpc.log("read %s :: %p\n", connectionTypeName[index<API>], (void*)this);
-    API::cast(connection)
-        .readDescriptor([me = std::move(me)](auto&& error, tensorpipe::Descriptor desc) mutable noexcept {
-          me->rpc.log("%s :: %p got data\n", connectionTypeName[index<API>], (void*)&*me);
-          if (me->dead.load(std::memory_order_relaxed)) {
-            me->rpc.log("already dead!\n");
-            return;
-          }
-          if (error) {
-            me->onError(error);
-          } else {
-            if (desc.metadata.size() != 4 || desc.tensors.size() == 0) {
-              me->onError("Received Invalid data");
-            } else {
-              tensorpipe::Allocation alloc;
-              uint32_t size;
-              deserializeBuffer(desc.metadata.data(), 4, size);
-              // me->rpc.log("got %d bytes\n", size);
-              BufferHandle buffer = makeBuffer(size, desc.tensors.size() - 1);
-              bool valid = true;
-              if (desc.tensors[0].sourceDevice.type != tensorpipe::kCpuDeviceType) {
-                valid = false;
-              }
-              alloc.tensors.resize(desc.tensors.size());
-              alloc.tensors[0].buffer = tensorpipe::CpuBuffer{buffer->data()};
-              if (desc.tensors[0].length !=
-                  size_t((std::byte*)(buffer->tensorMetaDataOffsets() + buffer->nTensors) - buffer->data())) {
-                valid = false;
-              }
-              TensorContext tensorContext;
-              std::optional<rpc::CUDAStreamGuard> streamGuard;
-              std::vector<Allocator> allocators;
-              allocators.reserve(desc.tensors.size() - 1);
-              for (size_t i = 1; i != desc.tensors.size(); ++i) {
-                auto& descTensor = desc.tensors[i];
-                auto& allocTensor = alloc.tensors[i];
-                if (descTensor.sourceDevice.type == tensorpipe::kCpuDeviceType) {
-                  allocators.emplace_back(rpc::kCPU, descTensor.length);
-                  allocTensor.buffer = tensorpipe::CpuBuffer{allocators.back().data()};
-#ifdef USE_CUDA
-                } else if (descTensor.sourceDevice.type == tensorpipe::kCudaDeviceType) {
-                  if (!tensorContext.stream) {
-                    tensorContext.stream.emplace(rpc::getStreamFromPool(true, 0));
-                    streamGuard.emplace(*tensorContext.stream);
-                  }
-                  allocators.emplace_back(rpc::kCUDA, descTensor.length);
-                  allocTensor.buffer = tensorpipe::CudaBuffer{
-                      allocators.back().data(), (cudaStream_t)tensorContext.stream->nativeHandle()};
-#endif
-                } else {
-                  me->onError("Received invalid tensor device type");
-                }
-              }
-              if (valid) {
-                API::cast(me->connection)
-                    .read(
-                        std::move(alloc),
-                        [allocators = std::move(allocators), buffer = std::move(buffer), me = std::move(me),
-                         tensorContext = std::move(tensorContext)](auto&& error) mutable noexcept {
-                          if (error) {
-                            me->onError(error);
-                          } else {
-                            std::optional<CUDAStreamGuard> sg;
-                            if (tensorContext.stream) {
-                              sg.emplace(*tensorContext.stream);
-                            }
-                            auto* offsets = buffer->tensorMetaDataOffsets();
-                            auto* tensors = buffer->tensors();
-                            auto* data = buffer->data();
-                            size_t nTensors = buffer->nTensors;
-                            size_t len = buffer->size;
-                            for (size_t i = 0; i != nTensors; ++i) {
-                              Tensor& t = tensors[i].tensor;
-                              decltype(t.scalar_type()) dtype;
-                              decltype(t.sizes()) sizes;
-                              decltype(t.strides()) strides;
-                              deserializeBufferPart(
-                                  data + offsets[i], len > offsets[i] ? len - offsets[i] : 0, dtype, sizes, strides);
-                              t = allocators[i].set(dtype, sizes, strides);
-                            }
-
-                            me->onData(std::move(buffer), tensorContext);
-
-                            me->read(std::move(me));
-                          }
-                        });
-              } else {
-                me->onError("Received invalid data (2)");
-              }
-            }
-          }
-        });
-  }
-
-  template<typename Buffer>
-  void sendTensorpipe(Buffer buffer, TensorContext& tensorContext, Deferrer& defer) {
-    // rpc.log("%s :: send %d bytes\n", connectionTypeName[index<API>], buffer->size);
-    defer([buffer = std::move(buffer), tensorContext = tensorContext, me = makeMe(this)]() mutable {
-      tensorpipe::Message msg;
-      msg.metadata.resize(4);
-      if ((uint32_t)buffer->size != buffer->size) {
-        fatal("send: buffer is too large (size does not fit in 32 bits)!");
-      }
-      serializeToUnchecked(msg.metadata.data(), (uint32_t)buffer->size);
-      msg.tensors.resize(buffer->nTensors + 1);
-      msg.tensors[0].buffer = tensorpipe::CpuBuffer{buffer->data()};
-      msg.tensors[0].length = (std::byte*)(buffer->tensorMetaDataOffsets() + buffer->nTensors) - buffer->data();
-      auto* tensors = buffer->tensors();
-      for (size_t i = 0; i != buffer->nTensors; ++i) {
-        Tensor& tensor = tensors[i].tensor;
-        auto& buf = msg.tensors[i + 1].buffer;
-        msg.tensors[i + 1].length = computeStorageNbytes(tensor.sizes(), tensor.strides(), tensor.itemsize());
-        if (tensor.is_cuda()) {
-          if (!tensorContext.stream) {
-            fatal(
-                "internal error: send (%p) involving cuda tensor received null tensorContext stream",
-                (void*)buffer->data());
-          }
-          msg.tensors[i + 1].targetDevice = tensorpipe::Device(tensorpipe::kCudaDeviceType, 0);
-#ifdef USE_CUDA
-          buf = tensorpipe::CudaBuffer{tensor.data_ptr(), (cudaStream_t)tensorContext.stream->nativeHandle()};
-#else
-          fatal("Attempting to send CUDA tensor in non-CUDA build");
-#endif
-        } else {
-          msg.tensors[i + 1].targetDevice = tensorpipe::Device(tensorpipe::kCpuDeviceType, 0);
-          buf = tensorpipe::CpuBuffer{tensor.data_ptr()};
-        }
-      }
-      API::cast(me->connection).write(std::move(msg), [buffer = std::move(buffer), me = std::move(me)](auto&& error) {
-        if (error) {
-          me->onError(std::forward<decltype(error)>(error));
-        }
-      });
-    });
-  }
-
-  void sendDirect(SharedBufferHandle buffer, TensorContext& tensorContext) {
-    API::cast(connection).write(std::move(buffer), nullptr);
-  }
-  void sendDirect(BufferHandle buffer, TensorContext& tensorContext) {
-    sendDirect(SharedBufferHandle(buffer.release()), tensorContext);
-  }
-
   template<typename Buffer>
   void send(Buffer buffer, TensorContext& tensorContext, Deferrer& defer) {
-    if constexpr (API::isTensorpipe) {
-      sendTensorpipe(std::move(buffer), tensorContext, defer);
-    } else {
-      sendDirect(std::move(buffer), tensorContext);
-    }
+    API::cast(connection).write(std::move(buffer), nullptr);
   }
 
   void read(Me<RpcConnectionImpl>&& me) {
-    if constexpr (API::isTensorpipe) {
-      readTensorpipe(std::move(me));
-    } else {
-      API::cast(connection).read([me = std::move(me)](auto&& error, BufferHandle buffer) mutable {
-        if (me->dead.load(std::memory_order_relaxed)) {
-          me->rpc.log("already dead!\n");
-          return;
-        }
-        if (error) {
-          me->onError(std::forward<decltype(error)>(error));
-        } else {
-          TensorContext tensorContext;
-          me->onData(std::move(buffer), tensorContext);
-        }
-      });
-    }
+    API::cast(connection).read([me = std::move(me)](auto&& error, BufferHandle buffer) mutable {
+      if (me->dead.load(std::memory_order_relaxed)) {
+        me->rpc.log("already dead!\n");
+        return;
+      }
+      if (error) {
+        me->onError(std::forward<decltype(error)>(error));
+      } else {
+        TensorContext tensorContext;
+        me->onData(std::move(buffer), tensorContext);
+      }
+    });
   }
 
   void start(Deferrer& defer) {
@@ -1368,11 +996,6 @@ struct RpcListenerImpl : RpcListenerImplBase {
   void accept() {
     API::cast(listener).accept([me = makeMe(this)](auto&& error, auto&& conn) mutable {
       if (error) {
-        // Tensorpipe accept will report errors on some connection setup errors,
-        // such as when connecting then immediately closing the connection.
-        // As a result, we ignore errors and hope for the best.
-        // Update: changed tensorpipe to ignore accept errors instead, otherwise
-        // it would get stuck in an infinite accept/error loop here
         if constexpr (std::is_same_v<std::decay_t<decltype(error)>, Error*>) {
           me->rpc.onAccept(*me, nullptr, error);
         } else {
@@ -1382,9 +1005,6 @@ struct RpcListenerImpl : RpcListenerImplBase {
       } else {
         auto c = std::make_unique<RpcConnectionImpl<API>>(me->rpc, std::move(conn));
         me->rpc.onAccept(*me, std::move(c), nullptr);
-        if (!me->dead && API::isTensorpipe) {
-          me->accept();
-        }
       }
     });
   }
@@ -2774,10 +2394,6 @@ struct Rpc::Impl {
     uint64_t us = std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
 
     float latency = std::min(us / 1000.0f / std::max(bytes / 128, (size_t)1), 10000.0f);
-
-    if (index<API> == (size_t)ConnectionType::uv) {
-      latency *= 10;
-    }
 
     Connection& cx = peer.connections_[index<API>];
     std::lock_guard l(cx.latencyMutex);
