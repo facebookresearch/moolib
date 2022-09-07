@@ -329,7 +329,7 @@ void serialize(X& x, const py::handle& v) {
   } else if (v.ptr() == Py_None) {
     x(pyTypes::none);
   } else if (py::isinstance<py::float_>(v)) {
-    x(pyTypes::float_, (float)py::reinterpret_borrow<py::float_>(v));
+    x(pyTypes::float_, (double)py::reinterpret_borrow<py::float_>(v));
   } else if (py::isinstance<py::dict>(v)) {
     x(pyTypes::dict, py::reinterpret_borrow<py::dict>(v));
   } else if (py::isinstance<py::str>(v)) {
@@ -366,7 +366,7 @@ void serialize(X& x, py::object& v) {
     v = py::none();
     break;
   case pyTypes::float_:
-    v = py::float_(x.template read<float>());
+    v = py::float_(x.template read<double>());
     break;
   case pyTypes::dict:
     v = x.template read<py::dict>();
