@@ -316,13 +316,15 @@ public:
   }
 
   Function& operator=(std::nullptr_t) noexcept {
-    if (ops_->dtor) {
-      ops_->dtor(*storage_);
-      ops_ = &impl::NullOps<R, Args...>::value;
+    auto* storage = storage_;
+    auto* ops = ops_;
+    ops_ = &impl::NullOps<R, Args...>::value;
+    storage_ = nullptr;
+    if (ops->dtor) {
+      ops->dtor(*storage);
     }
-    if (storage_) {
-      impl::freeStorage(storage_);
-      storage_ = nullptr;
+    if (storage) {
+      impl::freeStorage(storage);
     }
     return *this;
   }
