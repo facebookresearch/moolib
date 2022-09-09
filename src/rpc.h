@@ -101,6 +101,7 @@ enum ReqType : uint32_t {
   reqLookingForPeer,
   reqPeerFound,
   reqClose,
+  reqKeepalive,
 
   reqCallOffset = 1000,
 };

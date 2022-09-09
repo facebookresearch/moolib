@@ -395,6 +395,8 @@ struct RpcConnectionImplBase {
   std::atomic_bool dead{false};
   std::atomic_int activeOps{0};
   std::atomic<std::chrono::steady_clock::time_point> lastReceivedData = std::chrono::steady_clock::time_point{};
+  std::chrono::steady_clock::time_point lastKeepalive;
+  std::atomic_int keepaliveCount = 0;
   bool isExplicit = false;
   std::string connectAddr;
   std::chrono::steady_clock::time_point timeWait = std::chrono::steady_clock::time_point{};
@@ -882,6 +884,9 @@ struct RpcConnectionImpl : RpcConnectionImplBase {
     auto now = std::chrono::steady_clock::now();
     if (now - lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::milliseconds(1)) {
       lastReceivedData.store(now, std::memory_order_relaxed);
+      if (keepaliveCount.load(std::memory_order_relaxed)) {
+        keepaliveCount.store(0, std::memory_order_relaxed);
+      }
     }
     uint32_t rid;
     std::memcpy(&rid, ptr, sizeof(uint32_t));
@@ -1610,17 +1615,33 @@ struct Rpc::Impl {
         auto& x = p.connections_[ci];
         std::lock_guard l(x.mutex);
         for (size_t i = 0; i != x.conns.size(); ++i) {
-          // disabled until i figure out why it breaks things
-          if (false && now - x.conns[i]->lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::seconds(30)) {
-            log("closing conn due to long timeout\n");
-            BufferHandle buffer;
-            serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqClose);
-            TensorContext nullTensorContext;
-            switchOnAPI((ConnectionType)ci, [&](auto api) {
-              ((RpcConnectionImpl<decltype(api)>&)*x.conns[i]).send(std::move(buffer), nullTensorContext, defer);
-            });
-            p.throwAway(x, i);
-            --i;
+          auto& c = *x.conns[i];
+          if (now - c.lastReceivedData.load(std::memory_order_relaxed) >= std::chrono::seconds(10)) {
+            if (now - c.lastKeepalive >= std::chrono::seconds(4)) {
+              if (c.keepaliveCount < 4) {
+                ++c.keepaliveCount;
+                if (c.keepaliveCount > 1) {
+                  log("Sending keepalive %d\n", c.keepaliveCount);
+                }
+                c.lastKeepalive = now;
+                BufferHandle buffer;
+                serializeToBuffer(buffer, (uint32_t)1, (uint32_t)reqKeepalive);
+                TensorContext nullTensorContext;
+                switchOnAPI((ConnectionType)ci, [&](auto api) {
+                  ((RpcConnectionImpl<decltype(api)>&)*x.conns[i]).send(std::move(buffer), nullTensorContext, defer);
+                });
+              } else {
+                log("closing conn due to long timeout\n");
+                BufferHandle buffer;
+                serializeToBuffer(buffer, (uint32_t)0, (uint32_t)reqClose);
+                TensorContext nullTensorContext;
+                switchOnAPI((ConnectionType)ci, [&](auto api) {
+                  ((RpcConnectionImpl<decltype(api)>&)*x.conns[i]).send(std::move(buffer), nullTensorContext, defer);
+                });
+                p.throwAway(x, i);
+                --i;
+              }
+            }
           }
         }
       }
@@ -1711,7 +1732,7 @@ struct Rpc::Impl {
       };
       process(outgoing_);
       process(incoming_);
-      if (now - lastTimeoutConnections >= std::chrono::seconds(10)) {
+      if (now - lastTimeoutConnections >= std::chrono::seconds(4)) {
         lastTimeoutConnections = now;
         timeoutConnections(now, defer);
       }
@@ -2653,6 +2674,14 @@ struct RpcImpl : RpcImplBase {
     // debug("%s <- %s: onRequest rid %#x (%#x) fid %#x\n", rpc.myName, peer.name, rid, rid & ~(uint32_t)1, fid);
     rid &= ~(uint32_t)1;
     switch (fid) {
+    case reqKeepalive: {
+      log("got keepalive request from %s\n", peer.name);
+      BufferHandle buffer;
+      serializeToBuffer(buffer, rid, reqKeepalive);
+      TensorContext nullTensorContext;
+      conn.send(std::move(buffer), nullTensorContext, defer);
+      break;
+    }
     case reqAck: {
       // Peer acknowledged that it has received the response
       // (return value of an RPC call)
@@ -2832,6 +2861,10 @@ struct RpcImpl : RpcImplBase {
     log("onResponse peer %s rid %#x fid %#x\n", peer.name, rid, fid);
     rid |= 1;
     switch (fid) {
+    case reqKeepalive: {
+      log("got keepalive response from %s\n", peer.name);
+      break;
+    }
     case reqClose: {
       log("got reqClose from %s\n", peer.name);
       auto& x = peer.connections_.at(index<API>);
