@@ -126,17 +126,17 @@ struct alignas(64) AllocatorImpl {
     }
   }
 
-  size_t getSizeFor(size_t index, size_t subindex) {
+  static size_t getSizeFor(size_t index, size_t subindex) {
     return (1ul << index) + ((1ul << (index - 3)) * (1 + subindex));
   }
 
   template<typename T>
-  size_t findFirstSetBit(T v) {
+  static size_t findFirstSetBit(T v) {
     static_assert(sizeof(T) == sizeof(long));
     return __builtin_ctzl(v);
   }
   template<typename T>
-  size_t findLastSetBit(T v) {
+  static size_t findLastSetBit(T v) {
     static_assert(sizeof(T) == sizeof(long));
     return (sizeof(T) * 8 - 1) ^ __builtin_clzl(v);
   }
@@ -172,6 +172,13 @@ struct alignas(64) AllocatorImpl {
         break;
       }
     }
+  }
+
+  static size_t allocationSizeFor(size_t size) {
+    size = (size + alignof(std::max_align_t) - 1) & ~(alignof(std::max_align_t) - 1);
+    size_t index = findLastSetBit(size - 1);
+    size_t subindex = ((size - 1) >> (index - 3)) & 7;
+    return getSizeFor(index, subindex);
   }
 
   [[gnu::always_inline]] std::pair<void*, size_t> allocate(size_t size) {
@@ -303,6 +310,7 @@ struct MemfdAllocatorImpl {
     }
   }
   void expand(size_t size) {
+    size = allocator.allocationSizeFor(size) + 128;
     size_t memsize = std::max(allocated, size);
     if (memsize > size + 1024 * 1024 * 256) {
       if (allocated / 2 > size) {
