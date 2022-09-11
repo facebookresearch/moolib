@@ -139,6 +139,7 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   int af = -1;
   int fd = -1;
   std::atomic_bool closed = false;
+  bool readLoopClose = false;
   std::shared_ptr<ResolveHandle> resolveHandle;
   bool addedInPoll = false;
 
@@ -158,15 +159,12 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   Function<void(Error*, std::unique_lock<SpinMutex>*)> onRead;
   std::vector<int> receivedFds;
 
-  void close() {
-    if (closed.exchange(true)) {
+  void closeImpl() {
+    if (inReadLoop == this) {
+      readLoopClose = true;
       return;
     }
-
-    std::unique_lock l(readMutex, std::defer_lock);
-    if (inReadLoop != this) {
-      l.lock();
-    }
+    std::unique_lock l(readMutex);
     onRead = nullptr;
     std::lock_guard l2(writeMutex);
     std::unique_lock l3(writeQueueMutex);
@@ -182,6 +180,14 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     for (auto v : receivedFds) {
       ::close(v);
     }
+  }
+
+  void close() {
+    if (closed.exchange(true)) {
+      return;
+    }
+
+    closeImpl();
   }
 
   ~SocketImpl() {
@@ -372,6 +378,9 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
   void triggerRead() {
     scheduler.run([me = shared_from_this(), this] {
       std::unique_lock l(readMutex);
+      if (closed.load(std::memory_order_relaxed)) {
+        return;
+      }
       inReadLoop = this;
       while (true) {
         readTriggerCount.store(-0xffff, std::memory_order_relaxed);
@@ -389,6 +398,10 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
         }
       }
       inReadLoop = nullptr;
+      l.unlock();
+      if (readLoopClose) {
+        closeImpl();
+      }
     });
   }
 
