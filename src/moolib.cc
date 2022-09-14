@@ -289,7 +289,8 @@ struct FutureWrapper {
   void wait(float timeout) {
     py::gil_scoped_release gil;
     auto now = std::chrono::steady_clock::now();
-    auto end = now + std::chrono::duration<float, std::ratio<1, 1>>(timeout);
+    auto end = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                         std::chrono::duration<float, std::ratio<1, 1>>(timeout));
     while (!done()) {
       if (now >= end) {
         throw TimeoutError();
