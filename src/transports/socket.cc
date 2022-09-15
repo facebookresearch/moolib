@@ -12,7 +12,9 @@
 
 #include "fmt/printf.h"
 
+#include <ifaddrs.h>
 #include <limits.h>
+#include <net/if.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -101,7 +103,7 @@ std::shared_ptr<ResolveHandle> resolveIpAddress(std::string_view address, int po
   return h;
 }
 
-static std::pair<std::string_view, int> decodeIpAddress(std::string_view address) {
+std::pair<std::string_view, int> decodeIpAddress(std::string_view address) {
   std::string_view hostname = address;
   int port = 0;
   auto bpos = address.find('[');
@@ -770,6 +772,60 @@ struct SocketImpl : std::enable_shared_from_this<SocketImpl> {
     }
   }
 
+  std::vector<std::string> localAddresses() const {
+    if (af == AF_INET) {
+      std::vector<std::string> r;
+      sockaddr_storage addr;
+      socklen_t addrlen = sizeof(addr);
+      if (::getsockname(fd, (sockaddr*)&addr, &addrlen)) {
+        throw std::system_error(errno, std::generic_category(), "getsockname");
+      }
+      bool isAnyAddr = false;
+      int port = 0;
+      if (addr.ss_family == AF_INET) {
+        const sockaddr_in* sa = (const sockaddr_in*)&addr;
+        port = sa->sin_port;
+        if (sa->sin_addr.s_addr == INADDR_ANY) {
+          isAnyAddr = true;
+        }
+      } else if (addr.ss_family == AF_INET6) {
+        const sockaddr_in6* sa = (const sockaddr_in6*)&addr;
+        port = sa->sin6_port;
+        if (!memcmp(&sa->sin6_addr, &in6addr_any, sizeof(in6addr_any))) {
+          isAnyAddr = true;
+        }
+      }
+      if (isAnyAddr) {
+        struct ifaddrs* list;
+        if (::getifaddrs(&list) == 0) {
+          for (; list; list = list->ifa_next) {
+            try {
+              if (list->ifa_addr && (list->ifa_flags & IFF_RUNNING) == IFF_RUNNING &&
+                  list->ifa_addr->sa_family == addr.ss_family) {
+                if (addr.ss_family == AF_INET) {
+                  sockaddr_in sa;
+                  std::memcpy(&sa, list->ifa_addr, sizeof(sa));
+                  sa.sin_port = port;
+                  r.push_back(ipAndPort((const sockaddr*)&sa, sizeof(sa)));
+                } else if (addr.ss_family == AF_INET6) {
+                  sockaddr_in6 sa;
+                  std::memcpy(&sa, list->ifa_addr, sizeof(sa));
+                  sa.sin6_port = port;
+                  r.push_back(ipAndPort((const sockaddr*)&sa, sizeof(sa)));
+                }
+              }
+            } catch (const std::exception& e) {
+            }
+          }
+          ::freeifaddrs(list);
+        }
+      }
+      return r;
+    } else {
+      return {};
+    }
+  }
+
   std::string localAddress() const {
     if (af == AF_INET) {
       sockaddr_storage addr;
@@ -969,6 +1025,10 @@ void Socket::sendFd(int fd, Function<void(Error*)> callback) {
 
 int Socket::recvFd(CachedReader& reader) {
   return impl->recvFd(reader);
+}
+
+std::vector<std::string> Socket::localAddresses() const {
+  return impl->localAddresses();
 }
 
 std::string Socket::localAddress() const {

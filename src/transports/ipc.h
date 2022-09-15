@@ -25,11 +25,15 @@ struct Listener;
 struct UnixContext {
   std::shared_ptr<Listener> listen(std::string_view addr);
   std::shared_ptr<Connection> connect(std::string_view addr);
+  static bool isReachable(std::string_view networkKey, std::string_view address);
+  static std::string getNetworkKey();
 };
 
 struct TcpContext {
   std::shared_ptr<Listener> listen(std::string_view addr);
   std::shared_ptr<Connection> connect(std::string_view addr);
+  static bool isReachable(std::string_view networkKey, std::string_view address);
+  static std::string getNetworkKey();
 };
 
 struct Listener {
@@ -42,7 +46,7 @@ struct Listener {
 
   void accept(Function<void(Error*, std::shared_ptr<Connection>)> callback);
 
-  std::string localAddress() const;
+  std::vector<std::string> localAddresses() const;
 };
 
 struct ConnectionImpl;

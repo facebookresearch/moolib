@@ -214,28 +214,6 @@ std::pair<int, const char*> decodePort(std::string_view port) {
   return {(int)retval, p};
 }
 
-static std::pair<std::string_view, int> decodeIpAddress(std::string_view address) {
-  std::string_view hostname = address;
-  int port = 0;
-  auto bpos = address.find('[');
-  if (bpos != std::string_view::npos) {
-    auto bepos = address.find(']', bpos);
-    if (bepos != std::string_view::npos) {
-      hostname = address.substr(bpos + 1, bepos - (bpos + 1));
-      address = address.substr(bepos + 1);
-    }
-  }
-  auto cpos = address.find(':');
-  if (cpos != std::string_view::npos) {
-    if (hostname == address) {
-      hostname = address.substr(0, cpos);
-    }
-    ++cpos;
-    std::tie(port, std::ignore) = decodePort(address.substr(cpos));
-  }
-  return {hostname, port};
-}
-
 struct API_IPC {
   using Context = ipc::UnixContext;
   using Connection = std::shared_ptr<ipc::Connection>;
@@ -244,11 +222,18 @@ struct API_IPC {
   static constexpr bool addressIsIp = false;
   static constexpr bool supportsCuda = false;
 
+  static bool isReachable(std::string_view key, std::string_view addr) {
+    return ipc::UnixContext::isReachable(key, addr);
+  }
+  static std::string getNetworkKey() {
+    return ipc::UnixContext::getNetworkKey();
+  }
+
   static std::vector<std::string> defaultAddr() {
     return {randomAddress()};
   }
-  static std::string localAddr([[maybe_unused]] const Listener& listener, std::string addr) {
-    return addr;
+  static std::vector<std::string> localAddr([[maybe_unused]] const Listener& listener, std::string addr) {
+    return {addr};
   }
   static std::string localAddr([[maybe_unused]] const Connection&) {
     return "";
@@ -276,11 +261,18 @@ struct API_TCP {
   static constexpr bool addressIsIp = true;
   static constexpr bool supportsCuda = false;
 
+  static bool isReachable(std::string_view key, std::string_view addr) {
+    return ipc::TcpContext::isReachable(key, addr);
+  }
+  static std::string getNetworkKey() {
+    return ipc::TcpContext::getNetworkKey();
+  }
+
   static std::vector<std::string> defaultAddr() {
     return {"0.0.0.0", "[::]"};
   }
-  static std::string localAddr([[maybe_unused]] const Listener& listener, std::string addr) {
-    return listener->localAddress();
+  static std::vector<std::string> localAddr([[maybe_unused]] const Listener& listener, std::string addr) {
+    return listener->localAddresses();
   }
   static std::string localAddr([[maybe_unused]] const Connection& connection) {
     return connection->localAddress();
@@ -377,10 +369,11 @@ bool addressIsIp(ConnectionType t) {
 struct ConnectionTypeInfo {
   std::string_view name;
   std::vector<std::string_view> addr;
+  std::string_view networkKey;
 
   template<typename X>
   void serialize(X& x) {
-    x(name, addr);
+    x(name, addr, networkKey);
   }
 };
 
@@ -406,8 +399,8 @@ struct RpcListenerImplBase {
   virtual ~RpcListenerImplBase() {}
 
   virtual void close() = 0;
-  virtual std::string localAddr() const {
-    return "";
+  virtual std::vector<std::string> localAddr() const {
+    return {};
   }
 
   std::atomic<bool> dead = false;
@@ -430,6 +423,7 @@ struct Connection {
   std::chrono::steady_clock::time_point creationTimestamp = std::chrono::steady_clock::now();
 
   std::vector<std::string_view> remoteAddresses;
+  std::string_view networkKey;
 
   alignas(64) SpinMutex latencyMutex;
   std::chrono::steady_clock::time_point lastUpdateLatency;
@@ -695,7 +689,7 @@ struct PeerImpl {
     } else {
       log("No connectivity to %s\n", name);
 
-      if (shouldFindPeer) {
+      if (shouldFindPeer && !hasId.load(std::memory_order_relaxed)) {
         int timeout = findThisPeerIncrementingTimeoutMilliseconds;
         if (now - lastFindThisPeer.load(std::memory_order_relaxed) >= std::chrono::milliseconds(timeout)) {
           log("findpeer timeout is %d\n", timeout);
@@ -732,19 +726,29 @@ struct PeerImpl {
           now - x.lastTryConnect.load(std::memory_order_relaxed) >= std::chrono::seconds(1)) {
         x.lastTryConnect = now;
         ++x.connectionAttempts;
+        std::string_view networkKey = x.networkKey;
         if (x.remoteAddresses.empty()) {
           x.valid = false;
-        } else {
-          std::string_view addr;
-          if (x.remoteAddresses.size() == 1) {
-            addr = x.remoteAddresses[0];
-          } else {
-            addr = x.remoteAddresses[random<size_t>(0, x.remoteAddresses.size() - 1)];
-          }
+        } else if (x.remoteAddresses.size() == 1) {
+          std::string_view addr = x.remoteAddresses[0];
           l.unlock();
-          if (!addr.empty()) {
-            static std::atomic_int connects = 0;
-            // log(1, "connecting to %s::%s!! :D total %d\n", connectionTypeName[index<API>], addr, ++connects);
+          if (API::isReachable(networkKey, addr)) {
+            connect<API, false>(addr, defer);
+          }
+        } else {
+          size_t nConnects = (x.remoteAddresses.size() + 1) / 2;
+          std::vector<std::string_view> addrs = x.remoteAddresses;
+          l.unlock();
+          addrs.erase(
+              std::remove_if(
+                  addrs.begin(), addrs.end(),
+                  [&](std::string_view addr) { return !API::isReachable(networkKey, addr); }),
+              addrs.end());
+          std::shuffle(addrs.begin(), addrs.end(), rng);
+          if (addrs.size() > nConnects) {
+            addrs.resize(nConnects);
+          }
+          for (auto& addr : addrs) {
             connect<API, false>(addr, defer);
           }
         }
@@ -983,7 +987,7 @@ struct RpcListenerImpl : RpcListenerImplBase {
   bool isExplicit = false;
   bool active = false;
   std::string addr;
-  std::string localAddrStr_;
+  std::vector<std::string> localAddrStr_;
 
   virtual void close() override {
     if (dead.exchange(true, std::memory_order_relaxed)) {
@@ -994,7 +998,7 @@ struct RpcListenerImpl : RpcListenerImplBase {
     API::cast(listener).close();
   }
 
-  virtual std::string localAddr() const override {
+  virtual std::vector<std::string> localAddr() const override {
     return localAddrStr_;
   }
 
@@ -1808,7 +1812,7 @@ struct Rpc::Impl {
   void setup() noexcept {
     lazyInitRpc<API>();
     auto& x = listeners_.at(index<API>);
-    if (x.implicitCount > 0) {
+    if (x.explicitCount > 0) {
       return;
     }
     for (auto& addr : API::defaultAddr()) {
@@ -1832,11 +1836,14 @@ struct Rpc::Impl {
         for (size_t i = 0; i != listeners_.size(); ++i) {
           ConnectionTypeInfo ci;
           ci.name = connectionTypeName.at(i);
+          switchOnAPI(
+              ConnectionType(i), [&](auto api) { ci.networkKey = persistentString(decltype(api)::getNetworkKey()); });
           for (auto& v : listeners_[i].listeners) {
             try {
-              const auto& str = v->localAddr();
-              if (!str.empty()) {
-                ci.addr.push_back(persistentString(str));
+              for (const auto& str : v->localAddr()) {
+                if (!str.empty()) {
+                  ci.addr.push_back(persistentString(str));
+                }
               }
             } catch (const std::exception& e) {
             }
@@ -2165,12 +2172,11 @@ struct Rpc::Impl {
   template<typename API>
   void onGreeting(
       RpcConnectionImpl<API>& conn, std::string_view peerName, PeerId peerId, std::vector<ConnectionTypeInfo>&& info) {
-    // log(1, "%s::%s::onGreeting!(\"%s\", %s)\n", std::string(myName).c_str(), connectionTypeName[index<API>],
-    //     std::string(peerName).c_str(), peerId.toString().c_str());
+    // log(1, "%s::onGreeting!(\"%s\", %s)\n", connectionTypeName[index<API>], peerName, peerId.toString());
     // for (auto& v : info) {
-    //   log(1, " %s\n", std::string(v.name).c_str());
+    //   log(1, " %s (network key %s)\n", v.name, v.networkKey);
     //   for (auto& v2 : v.addr) {
-    //     log(1, "  @ %s\n", std::string(v2).c_str());
+    //     log(1, "  @ %s\n", v2);
     //   }
     // }
     Deferrer defer;
@@ -2243,6 +2249,7 @@ struct Rpc::Impl {
             for (size_t i = 0; i != connectionTypeName.size(); ++i) {
               if (v.name == connectionTypeName[i]) {
                 auto& x = peer.connections_.at(i);
+                x.networkKey = persistentString(v.networkKey);
                 auto trimAddresses = [&](int n) {
                   if (x.remoteAddresses.size() > n) {
                     x.remoteAddresses.erase(
@@ -2251,33 +2258,37 @@ struct Rpc::Impl {
                 };
                 std::lock_guard l(x.mutex);
                 x.valid = true;
-                std::string addr;
-                if (API::addressIsIp && addressIsIp((ConnectionType)i)) {
-                  addr = conn.remoteAddr();
-                }
-                if (!addr.empty()) {
-                  auto remote = decodeIpAddress(addr);
-                  bool remoteIpv6 = remote.first.find(':') != std::string_view::npos;
-                  for (auto& v2 : v.addr) {
-                    auto v3 = decodeIpAddress(v2);
-                    bool ipv6 = v3.first.find(':') != std::string_view::npos;
-                    if (ipv6 != remoteIpv6) {
-                      continue;
-                    }
-                    std::string newAddr = (ipv6 ? "[" + std::string(remote.first) + "]" : std::string(remote.first)) +
-                                          ":" + std::to_string(v3.second);
-                    if (std::find(x.remoteAddresses.begin(), x.remoteAddresses.end(), newAddr) ==
-                        x.remoteAddresses.end()) {
-                      x.remoteAddresses.push_back(persistentString(newAddr));
-                      trimAddresses(48);
+                bool isIp = addressIsIp((ConnectionType)i);
+                if (API::addressIsIp && isIp) {
+                  std::string addr = conn.remoteAddr();
+                  if (!addr.empty() && !isAnyAddress(addr)) {
+                    auto remote = decodeIpAddress(addr);
+                    bool remoteIpv6 = remote.first.find(':') != std::string_view::npos;
+                    for (auto& v2 : v.addr) {
+                      auto v3 = decodeIpAddress(v2);
+                      bool ipv6 = v3.first.find(':') != std::string_view::npos;
+                      if (ipv6 != remoteIpv6) {
+                        continue;
+                      }
+                      std::string newAddr =
+                          fmt::sprintf("%s%s%s:%d", ipv6 ? "[" : "", remote.first, ipv6 ? "]" : "", v3.second);
+                      if (std::find(x.remoteAddresses.begin(), x.remoteAddresses.end(), newAddr) ==
+                          x.remoteAddresses.end()) {
+                        x.remoteAddresses.push_back(persistentString(newAddr));
+                        trimAddresses(48);
+                      }
                     }
                   }
-                } else if (!addressIsIp((ConnectionType)i)) {
-                  for (auto& v2 : v.addr) {
-                    if (std::find(x.remoteAddresses.begin(), x.remoteAddresses.end(), v2) == x.remoteAddresses.end()) {
-                      x.remoteAddresses.push_back(persistentString(v2));
-                      trimAddresses(48);
+                }
+                for (auto& v2 : v.addr) {
+                  if (isIp) {
+                    if (isAnyAddress(v2)) {
+                      continue;
                     }
+                  }
+                  if (std::find(x.remoteAddresses.begin(), x.remoteAddresses.end(), v2) == x.remoteAddresses.end()) {
+                    x.remoteAddresses.push_back(persistentString(v2));
+                    trimAddresses(48);
                   }
                 }
                 for (auto& v : x.remoteAddresses) {
@@ -2319,6 +2330,20 @@ struct Rpc::Impl {
       std::swap(peerList, findPeerLocalPeerList_);
       findPeerList_.clear();
       peerList.clear();
+    }
+    nameList.erase(
+        std::remove_if(
+            nameList.begin(), nameList.end(),
+            [&](std::string_view name) {
+              auto& peer = getPeer(name);
+              if (peer.hasId.load(std::memory_order_relaxed)) {
+                return true;
+              }
+              return false;
+            }),
+        nameList.end());
+    if (nameList.empty()) {
+      return;
     }
     size_t n = 0;
     {
@@ -2729,6 +2754,7 @@ struct RpcImpl : RpcImplBase {
                 vec.emplace_back();
                 vec.back().name = connectionTypeName.at(&x - p.connections_.data());
                 vec.back().addr = x.remoteAddresses;
+                vec.back().networkKey = x.networkKey;
               }
             }
             if (!vec.empty()) {
@@ -2897,11 +2923,15 @@ struct RpcImpl : RpcImplBase {
         PeerImpl& peer = rpc.getPeer(name);
         bool anyConnections = false;
         std::unique_lock l(peer.idMutex_);
+        if (peer.hasId.load(std::memory_order_relaxed)) {
+          continue;
+        }
         for (auto& n : vec) {
           for (size_t i = 0; i != peer.connections_.size(); ++i) {
             if (connectionTypeName[i] == n.name) {
               auto& x = peer.connections_[i];
               std::lock_guard l(x.mutex);
+              x.networkKey = rpc.persistentString(n.networkKey);
               x.valid = true;
               for (auto& v2 : n.addr) {
                 if (std::find(x.remoteAddresses.begin(), x.remoteAddresses.end(), v2) == x.remoteAddresses.end()) {

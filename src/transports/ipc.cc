@@ -7,6 +7,7 @@
 
 #include "ipc.h"
 
+#include <cstdio>
 #include <limits.h>
 #include <sys/uio.h>
 #include <unistd.h>
@@ -41,8 +42,8 @@ void Listener::accept(Function<void(Error*, std::shared_ptr<Connection>)> callba
   });
 }
 
-std::string Listener::localAddress() const {
-  return socket.localAddress();
+std::vector<std::string> Listener::localAddresses() const {
+  return socket.localAddresses();
 }
 
 const uint32_t sigSocketData = 0x39eb69f4;
@@ -272,6 +273,43 @@ std::shared_ptr<Connection> TcpContext::connect(std::string_view addr) {
   });
 
   return connection;
+}
+
+std::string readBootId() {
+  char buf[64];
+  std::memset(buf, 0, sizeof(buf));
+  FILE* f = ::fopen("/proc/sys/kernel/random/boot_id", "rb");
+  if (f) {
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    while (n && buf[n - 1] == '\n') {
+      --n;
+    }
+    buf[n] = 0;
+    fclose(f);
+  }
+  return buf;
+}
+
+std::string bootId = readBootId();
+
+bool UnixContext::isReachable(std::string_view networkKey, std::string_view address) {
+  return networkKey == bootId;
+}
+std::string UnixContext::getNetworkKey() {
+  return bootId;
+}
+
+bool TcpContext::isReachable(std::string_view networkKey, std::string_view address) {
+  if (isAnyAddress(address)) {
+    return false;
+  }
+  if (isLoopbackAddress(address)) {
+    return networkKey == bootId;
+  }
+  return true;
+}
+std::string TcpContext::getNetworkKey() {
+  return bootId;
 }
 
 } // namespace ipc
