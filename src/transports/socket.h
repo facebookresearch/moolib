@@ -19,6 +19,18 @@
 
 namespace rpc {
 
+std::pair<std::string_view, int> decodeIpAddress(std::string_view address);
+
+inline bool isLoopbackAddress(std::string_view address) {
+  std::tie(address, std::ignore) = decodeIpAddress(address);
+  return address == "::1" || address == "127.0.0.1";
+}
+
+inline bool isAnyAddress(std::string_view address) {
+  std::tie(address, std::ignore) = decodeIpAddress(address);
+  return address == "" || address == "::" || address == "0.0.0.0";
+}
+
 struct iovec {
   void* iov_base = nullptr;
   size_t iov_len = 0;
@@ -53,6 +65,7 @@ struct Socket {
   void sendFd(int fd, Function<void(Error*)> callback);
   int recvFd(CachedReader& reader);
 
+  std::vector<std::string> localAddresses() const;
   std::string localAddress() const;
   std::string remoteAddress() const;
 
