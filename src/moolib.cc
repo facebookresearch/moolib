@@ -1503,13 +1503,20 @@ void set_log_level(py::object level) {
   }
 }
 
+static bool moduleUnloaded = false;
+
 PYBIND11_MODULE(_C, m) {
   moduleIncRef();
-  rpc::moolibModule = m.ptr();
   m.add_object("_cleanup", py::capsule([] {
-                 moduleUnload();
-                 rpc::moolibModule = nullptr;
+                 if (!moduleUnloaded) {
+                   moduleUnload();
+                 }
                }));
+  py::module::import("atexit").attr("register")(py::cpp_function([] {
+    if (!moduleUnloaded) {
+      moduleUnload();
+    }
+  }));
 
   // numpy forks during import, and pybind can trigger a numpy import
   // during serialization (just for checking if the input is a numpy array).
