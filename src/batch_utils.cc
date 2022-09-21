@@ -292,17 +292,7 @@ py::object stackFields(const py::tuple& input, int64_t dim) {
   std::vector<rpc::Tensor> stackedTensors;
   stackedTensors.reserve(tensors.size());
   for (const auto& cur : tensors) {
-    const auto curSizes = cur[0].sizes();
-    if (curSizes.size() > 0) {
-      // torch::cat is much faster than torch::stack.
-      // https://github.com/pytorch/pytorch/issues/22462
-      std::vector<int64_t> newSizes(curSizes.size() + 1);
-      newSizes[0] = batchSize;
-      std::copy(curSizes.cbegin(), curSizes.cend(), newSizes.begin() + 1);
-      stackedTensors.push_back(rpc::cat(cur, dim).view(rpc::IntArrayRef(newSizes.data(), newSizes.size())));
-    } else {
-      stackedTensors.push_back(rpc::stack(cur, dim));
-    }
+    stackedTensors.push_back(rpc::stack(cur, dim));
   }
 
   // Recover the nested structure as input[0].
