@@ -10,9 +10,11 @@
 #include "fmt/printf.h"
 #include "pybind11/pybind11.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <ctime>
 #include <mutex>
+#include <utility>
 
 namespace moolib {
 

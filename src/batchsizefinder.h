@@ -6,9 +6,18 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <iterator>
+#include <limits>
+#include <map>
 #include <optional>
 #include <random>
+#include <ratio>
+#include <tuple>
+#include <utility>
+#include <vector>
 
 #include <fmt/printf.h>
 

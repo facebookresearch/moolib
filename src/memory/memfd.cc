@@ -5,10 +5,15 @@
 #include "fmt/printf.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
+#include <iterator>
 #include <memory>
+#include <shared_mutex>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 
 #include <sys/mman.h>

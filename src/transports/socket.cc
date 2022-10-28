@@ -12,6 +12,11 @@
 
 #include "fmt/printf.h"
 
+#include <array>
+#include <atomic>
+#include <stdexcept>
+#include <system_error>
+
 #include <ifaddrs.h>
 #include <limits.h>
 #include <net/if.h>
