@@ -22,7 +22,6 @@
 #include "logging.h"
 #include "pythonserialization.h"
 
-
 namespace moolib {
 
 struct AccumulatorResource : ResourceObject<AccumulatorResource> {
