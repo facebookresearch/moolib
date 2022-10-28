@@ -12,9 +12,13 @@
 
 #include "fmt/printf.h"
 
+#include <cstring>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <string_view>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 namespace rpc {

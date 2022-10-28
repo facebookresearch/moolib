@@ -14,6 +14,9 @@
 #include "fmt/printf.h"
 
 #include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace rpc {
 

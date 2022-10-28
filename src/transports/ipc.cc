@@ -7,8 +7,10 @@
 
 #include "ipc.h"
 
+#include <climits>
 #include <cstdio>
-#include <limits.h>
+#include <utility>
+
 #include <sys/uio.h>
 #include <unistd.h>
 

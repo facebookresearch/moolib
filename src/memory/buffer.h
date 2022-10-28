@@ -10,9 +10,11 @@
 #include "allocator.h"
 #include "tensor.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdlib>
 #include <new>
+#include <type_traits>
 
 namespace rpc {
 

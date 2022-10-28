@@ -7,6 +7,9 @@
 
 #pragma once
 
+#include <memory>
+#include <string>
+
 #include "pybind11/pybind11.h"
 
 #include "rpc.h"

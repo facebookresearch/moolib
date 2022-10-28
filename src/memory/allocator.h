@@ -15,7 +15,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdlib>
+#include <mutex>
 #include <stdlib.h>
+#include <utility>
 #include <vector>
 
 namespace rpc {

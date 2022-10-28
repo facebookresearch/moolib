@@ -11,6 +11,8 @@
 #include <torch/python.h>
 #include <torch/torch.h>
 
+#include <optional>
+
 namespace rpc {
 
 pybind11::object toPython(const Tensor& t) {

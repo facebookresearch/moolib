@@ -10,6 +10,8 @@
 #include "pybind11/pybind11.h"
 
 #include <mutex>
+#include <optional>
+#include <utility>
 
 namespace moolib {
 

@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
+#include <type_traits>
 #include <utility>
 
 namespace moolib {

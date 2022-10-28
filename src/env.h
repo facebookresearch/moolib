@@ -13,9 +13,20 @@
 #include "tensor.h"
 #include "util.h"
 
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <list>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <new>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <unordered_map>
 
 namespace moolib {
 
