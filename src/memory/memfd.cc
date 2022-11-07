@@ -15,6 +15,7 @@
 #include <system_error>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <sys/mman.h>
 #include <unistd.h>
