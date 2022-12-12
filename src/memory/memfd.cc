@@ -18,12 +18,20 @@
 #include <vector>
 
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #undef assert
 //#define assert(x) (bool(x) ? 0 : (printf("assert failure %s:%d\n", __FILE__, __LINE__), std::abort(), 0))
 //#define assert(x) (bool(x) ? 0 : (__builtin_unreachable(), 0))
 #define assert(x)
+
+// We want to pass the MFD_CLOEXEC flag, but we can't rely on glibc exposing
+// it, thus we redefine its value if needed.
+#ifndef MFD_CLOEXEC
+// https://github.com/torvalds/linux/blob/master/include/uapi/linux/memfd.h
+#define MFD_CLOEXEC 0x0001U
+#endif
 
 namespace rpc {
 
@@ -42,7 +50,18 @@ Memfd::~Memfd() {
 }
 
 Memfd Memfd::create(size_t size) {
-  int fd = memfd_create("Memfd", MFD_CLOEXEC);
+  // Invoking memfd_create via its raw syscall, instead of its glibc wrapper,
+  // removes any dependency on glibc (at compile-time and at runtime). It just
+  // requires the kernel to support it, both at runtime (obviously) but also at
+  // compile-time since the SYS_memfd_create value comes from the kernel, and
+  // cannot be polyfilled since it's architecture-dependent.
+#ifdef SYS_memfd_create
+  int fd = static_cast<int>(
+      ::syscall(SYS_memfd_create, static_cast<const char*>("Memfd"), static_cast<unsigned int>(MFD_CLOEXEC)));
+#else  // SYS_memfd_create
+  int fd = -1;
+  errno = ENOSYS;
+#endif // SYS_memfd_create
   if (fd == -1) {
     throw std::system_error(errno, std::generic_category(), "memfd_create");
   }
